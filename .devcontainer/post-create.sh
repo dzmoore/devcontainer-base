@@ -3,62 +3,38 @@ set -euo pipefail
 
 GITHUB_ENV_FILE="$HOME/.dc/github/.env"
 BRAVE_ENV_FILE="$HOME/.dc/brave/.env"
+DEV_USER="${SUDO_USER:-$(id -un)}"
 
-echo "Generating locale for proper Unicode width detection..."
-# Generate locale for proper Unicode width detection (markdown tables, box-drawing)
-sudo locale-gen en_US.UTF-8 2>/dev/null || true
+# Read the GitHub token in a subshell so the rest of the script's child
+# processes do not inherit it. The .bashrc blocks further down load the env
+# files for future interactive shells.
+github_token=""
+if [ -f "$GITHUB_ENV_FILE" ]; then
+  echo "Loading GitHub env ($GITHUB_ENV_FILE)..."
+  github_token="$(
+    set -a
+    . "$GITHUB_ENV_FILE"
+    printf '%s' "${GITHUB_TOKEN:-}"
+  )"
+fi
 
 echo "Configuring opencode directories..."
-OPENDIR=/home/vscode/.local/share/opencode
-sudo mkdir -p "$OPENDIR"
-if [ "$(stat -c '%U' "$OPENDIR" 2>/dev/null)" != "vscode" ]; then
-  sudo chown -R vscode:vscode "$OPENDIR"
-fi
+for dir in \
+  "$HOME/.local/share/opencode" \
+  "$HOME/.config/opencode" \
+  "$HOME/.local/state/opencode" \
+  "$HOME/.local/share/opentui/tree-sitter" \
+  "$HOME/.local/share/uv" \
+  "$HOME/.local/state/nvim" \
+  "$HOME/.local/share/nvim" \
+  "$HOME/.local/bin"; do
+  sudo mkdir -p "$dir"
+done
 
-CONFIGDIR=/home/vscode/.config/opencode
-sudo mkdir -p "$CONFIGDIR"
-if [ "$(stat -c '%U' "$CONFIGDIR" 2>/dev/null)" != "vscode" ]; then
-  sudo chown -R vscode:vscode "$CONFIGDIR"
-fi
-
-STATEDIR=/home/vscode/.local/state/opencode
-sudo mkdir -p "$STATEDIR"
-if [ "$(stat -c '%U' "$STATEDIR" 2>/dev/null)" != "vscode" ]; then
-  sudo chown -R vscode:vscode "$STATEDIR"
-fi
-
-# Tree-sitter cache dir for @opentui/core markdown rendering
-OPENTUI_DIR=/home/vscode/.local/share/opentui
-sudo mkdir -p "$OPENTUI_DIR/tree-sitter"
-if [ "$(stat -c '%U' "$OPENTUI_DIR" 2>/dev/null)" != "vscode" ]; then
-  sudo chown -R vscode:vscode "$OPENTUI_DIR"
-fi
-
-echo "Installing yq..."
-case "$(uname -s)" in
-Linux*) YQ_OS=linux ;;
-Darwin*) YQ_OS=darwin ;;
-MINGW* | MSYS* | CYGWIN*) YQ_OS=windows ;;
-*)
-  echo "Unknown OS: $(uname -s)"
-  exit 1
-  ;;
-esac
-
-case "$(uname -m)" in
-x86_64 | amd64) YQ_ARCH=amd64 ;;
-arm64 | aarch64) YQ_ARCH=arm64 ;;
-armv7l | armv6l) YQ_ARCH=arm ;;
-i386 | i686) YQ_ARCH=386 ;;
-*)
-  echo "Unknown architecture: $(uname -m)"
-  exit 1
-  ;;
-esac
-
-YQ_PLATFORM="${YQ_OS}_${YQ_ARCH}"
-sudo curl -Lo /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_${YQ_PLATFORM}"
-sudo chmod +x /usr/local/bin/yq
+# Repair ownership for existing volumes. Fresh volumes inherit developer
+# ownership from the pre-created directories in the Dockerfile. Chown the
+# parent directories too so tools can create new files under them.
+sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" /worktrees
 
 # VS Code's remote-containers integration injects a docker credential helper
 # (credsStore) into ~/.docker/config.json that only works inside a live VS Code
@@ -71,40 +47,43 @@ if [ -f "$DOCKER_CFG" ] && yq -e '.credsStore' "$DOCKER_CFG" >/dev/null 2>&1; th
   echo "Removed broken docker credsStore from $DOCKER_CFG"
 fi
 
-if [ -e "$GITHUB_ENV_FILE" ]; then
-  echo "Loading GitHub env ($GITHUB_ENV_FILE)..."
+# yq is installed and pinned in the Dockerfile; verify it is available.
+echo "Verifying yq..."
+yq --version
 
+if ! grep -qF '# --- github env ---' "$HOME/.bashrc" 2>/dev/null; then
   cat >>"$HOME/.bashrc" <<EOF
+
+# --- github env ---
 GITHUB_ENV_FILE="$GITHUB_ENV_FILE"
-EOF
-
-  cat >>"$HOME/.bashrc" <<'EOF'
-export $(grep -v '^#' "$GITHUB_ENV_FILE" | xargs)
+if [ -f "$GITHUB_ENV_FILE" ]; then
+  set -a
+  . "$GITHUB_ENV_FILE"
+  set +a
+fi
 EOF
 fi
 
-if [ -e "$BRAVE_ENV_FILE" ]; then
-  echo "Loading Brave env ($BRAVE_ENV_FILE)..."
+if ! grep -qF '# --- brave env ---' "$HOME/.bashrc" 2>/dev/null; then
   cat >>"$HOME/.bashrc" <<EOF
-BRAVE_ENV_FILE="$BRAVE_ENV_FILE"
-EOF
 
-  cat >>"$HOME/.bashrc" <<'EOF'
-export $(grep -v '^#' "$BRAVE_ENV_FILE" | xargs)
+# --- brave env ---
+BRAVE_ENV_FILE="$BRAVE_ENV_FILE"
+if [ -f "$BRAVE_ENV_FILE" ]; then
+  set -a
+  . "$BRAVE_ENV_FILE"
+  set +a
+fi
 EOF
 fi
-
-# echo "Installing vim..."
-# sudo apt-cache update
-# sudo apt-get install -y vim
 
 echo "Logging into Helm registry with GitHub token..."
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u unused --password-stdin 2>/dev/null || true
+if [ -n "$github_token" ]; then
+  printf '%s' "$github_token" | helm registry login ghcr.io -u unused --password-stdin 2>/dev/null || true
 fi
 
 echo "Setting up kubectl aliases and completion..."
-if ! grep -q '# --- kubectl aliases' "$HOME/.bashrc" 2>/dev/null; then
+if ! grep -qF '# --- kubectl aliases ---' "$HOME/.bashrc" 2>/dev/null; then
   cat >>"$HOME/.bashrc" <<'EOF'
 
 # --- kubectl aliases ---
@@ -115,32 +94,19 @@ k() {
     *) kubectl "$@" ;;
   esac
 }
-source <(kubectl completion bash 2>/dev/null)
-complete -F __start_kubectl k
+if command -v kubectl >/dev/null 2>&1; then
+  source <(kubectl completion bash 2>/dev/null)
+  complete -F __start_kubectl k
+fi
 EOF
 fi
 
-source <(kubectl completion bash 2>/dev/null)
-k() {
-  case "$1" in
-  ns)
-    shift
-    kubens "$@"
-    ;;
-  ctx)
-    shift
-    kubectx "$@"
-    ;;
-  *) kubectl "$@" ;;
-  esac
-}
-complete -F __start_kubectl k
+mkdir -p "$HOME/.local/bin"
+if uv tool list 2>/dev/null | grep -q '^specify-cli ' && [ -x "$HOME/.local/bin/specify" ]; then
+  echo "specify-cli already installed."
+else
+  echo "Installing specify-cli..."
+  uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.16.4
+fi
 
-echo "Fixing uv tool install directories..."
-# Fix permissions for uv tool install (directories may be owned by root from mounts)
-sudo chown -R vscode:vscode /home/vscode/.local
-mkdir -p /home/vscode/.local/bin
-
-uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.16.4
-
-echo 'Run agent-platform-up to bootstrap the kagent stack.'
+echo 'Dev container setup complete.'

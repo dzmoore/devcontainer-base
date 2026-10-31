@@ -30,13 +30,17 @@
     "type=bind,src=${localEnv:HOME}/.devcontainer/github/.env,dst=/home/developer/.dc/github/.env,bind-create-src,ro",
     "type=bind,src=${localEnv:HOME}/.devcontainer/brave/.env,dst=/home/developer/.dc/brave/.env,bind-create-src,ro"
   ],
+  "containerEnv": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": "en_US.UTF-8"
+  },
   "remoteEnv": {
-    "PATH": "${containerEnv:PATH}:/home/developer/.opencode/bin",
+    "PATH": "${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin",
     "KUBECONFIG": "/workspace/.kube/config",
     "OPENCODE_CONFIG": "/workspace/opencode.jsonc"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
-  "waitFor": "postStartCommand",
+  "waitFor": "postCreateCommand",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace"
 }
