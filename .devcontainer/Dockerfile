@@ -10,10 +10,14 @@ ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG YQ_VERSION=v4.54.1
 ARG OPENCODE_VERSION=2.2.5
+ARG NVIM_VERSION=v0.12.6
+ARG STARSHIP_VERSION=v1.27.0
+ARG SPECIFY_VERSION=v0.16.4
 
 # Install core development tools stripped out of the slim image.
 # libatomic1 is required by the official Node.js arm64 binaries; openssh-client
 # is needed for SSH git remotes; ripgrep avoids OpenCode's arm64 fallback path.
+# python3/pipx are used to install the spec-kit CLI at build time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   git \
   curl \
@@ -23,6 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   openssh-client \
   ripgrep \
   locales \
+  unzip \
+  zip \
+  python3 \
+  python3-venv \
+  pipx \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
@@ -66,6 +75,33 @@ RUN arch="$(dpkg --print-architecture)" \
   -o /usr/local/bin/yq \
   && chmod +x /usr/local/bin/yq \
   && yq --version
+
+# Install Neovim from the official release tarball. The tarball is
+# self-contained apart from libc/libm/libgcc, which bookworm already provides.
+RUN arch="$(dpkg --print-architecture)" \
+  && case "$arch" in \
+       amd64) nvim_arch=x86_64 ;; \
+       arm64) nvim_arch=arm64 ;; \
+       *) echo "Unsupported architecture for Neovim: $arch" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-${nvim_arch}.tar.gz" \
+    -o /tmp/nvim.tar.gz \
+  && tar -xzf /tmp/nvim.tar.gz -C /opt \
+  && mv "/opt/nvim-linux-${nvim_arch}" /opt/nvim \
+  && ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim \
+  && rm /tmp/nvim.tar.gz \
+  && nvim --version | head -1
+
+# Install Starship (pinned) for the interactive bash prompt.
+RUN curl -fsSL https://starship.rs/install.sh -o /tmp/starship-install.sh \
+  && sh /tmp/starship-install.sh -y --bin-dir /usr/local/bin --version "${STARSHIP_VERSION}" \
+  && rm /tmp/starship-install.sh \
+  && starship --version | head -1
+
+# Install the spec-kit CLI at build time so post-create only has to verify it.
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
+    pipx install "git+https://github.com/github/spec-kit.git@${SPECIFY_VERSION}" \
+  && specify --help >/dev/null
 
 USER $USERNAME
 

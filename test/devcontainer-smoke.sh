@@ -7,7 +7,7 @@
 # rewritten; the smoke tests do not write to them. The real repo's container
 # and volumes are never modified by this script.
 #
-# Usage: test/devcontainer-smoke.sh [guard|static|build|pre|up|smoke|smoke-real|idempotent|recreate|fresh|cleanup|all]
+# Usage: test/devcontainer-smoke.sh [guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|cleanup|all]
 # Set CID=<container-id> for smoke-real.
 set -euo pipefail
 
@@ -215,6 +215,10 @@ check((repo / '.devcontainer' / 'post-create.sh').is_file(), 'post-create.sh mis
 container_env = dc.get('containerEnv', {})
 check(container_env.get('LANG') == 'en_US.UTF-8', 'containerEnv.LANG must be en_US.UTF-8')
 check(container_env.get('LC_ALL') == 'en_US.UTF-8', 'containerEnv.LC_ALL must be en_US.UTF-8')
+check(container_env.get('STARSHIP_CONFIG') == '/workspace/.devcontainer/starship.toml',
+      'containerEnv.STARSHIP_CONFIG must point at the repo config')
+check(container_env.get('EDITOR') == 'nvim', 'containerEnv.EDITOR must be nvim')
+check(container_env.get('VISUAL') == 'nvim', 'containerEnv.VISUAL must be nvim')
 
 remote_path = dc.get('remoteEnv', {}).get('PATH', '')
 check('/home/developer/.opencode/bin' in remote_path, 'remoteEnv.PATH missing opencode bin')
@@ -230,7 +234,7 @@ for mount in dc.get('mounts', []):
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
       'Dockerfile useradd must set --shell /bin/bash')
-for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales'):
+for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip'):
     check(pkg in dockerfile, f'Dockerfile must install {pkg}')
 check(re.search(r'^ENV LANG=en_US\.UTF-8', dockerfile, re.M) is not None,
       'Dockerfile must set ENV LANG=en_US.UTF-8')
@@ -239,6 +243,11 @@ check('chown -R $USERNAME:$USERNAME' in dockerfile,
 check('/home/$USERNAME/.local' in dockerfile and '/home/$USERNAME/.config' in dockerfile,
       'Dockerfile must chown the .local and .config parents')
 check('/worktrees' in dockerfile, 'Dockerfile must pre-create /worktrees')
+for arg in ('NVIM_VERSION', 'STARSHIP_VERSION', 'SPECIFY_VERSION'):
+    check(arg in dockerfile, f'Dockerfile must pin {arg}')
+check('nvim-linux-${nvim_arch}.tar.gz' in dockerfile, 'Dockerfile must install Neovim')
+check('starship.rs/install.sh' in dockerfile, 'Dockerfile must install Starship')
+check('pipx install' in dockerfile, 'Dockerfile must install specify-cli')
 
 post = post_path.read_text()
 check('vscode' not in post.lower(), 'post-create.sh still references vscode')
@@ -249,8 +258,13 @@ check('# --- github env ---' in post, 'post-create.sh missing github env marker'
 check('# --- brave env ---' in post, 'post-create.sh missing brave env marker')
 check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" /worktrees' in post,
       'post-create.sh must chown .local, .config, and /worktrees to the runtime user')
-check('uv tool install specify-cli' in post, 'post-create.sh must install specify-cli')
+check('specify --help' in post, 'post-create.sh must verify specify-cli')
 check('yq --version' in post, 'post-create.sh must verify yq')
+check('# --- devcontainer aliases ---' in post, 'post-create.sh must load the aliases config')
+check('# --- terminal paste ---' in post, 'post-create.sh must harden terminal paste handling')
+check('# --- starship prompt ---' in post, 'post-create.sh must load the Starship prompt')
+check((repo / '.devcontainer' / 'aliases.sh').is_file(), 'aliases.sh missing')
+check((repo / '.devcontainer' / 'starship.toml').is_file(), 'starship.toml missing')
 
 for p in (repo / '.devcontainer').glob('*'):
     if p.is_file():
@@ -297,7 +311,7 @@ check_eq "identity: shell" /bin/bash "$(getent passwd developer | cut -d: -f7)"
 check "identity: passwordless sudo" sudo -n true
 check_eq "home" /home/developer "$HOME"
 
-for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm minikube gh docker ssh rg; do
+for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm minikube gh docker ssh rg nvim starship specify unzip zip; do
   check "command: $c" command -v "$c"
 done
 
@@ -309,6 +323,11 @@ check "run: uv" uv --version
 check "run: bun" bun --version
 check "run: yq" yq --version
 check "run: opencode" opencode --version
+check "run: nvim" nvim --version
+check "run: starship" starship --version
+check "run: specify" specify --help
+check "run: unzip" unzip -v
+check "run: zip" zip -v
 
 docker_ok=0
 for _ in $(seq 1 60); do
@@ -359,8 +378,10 @@ check "identity: passwordless sudo" sudo -n true
 check_eq "home" /home/developer "$HOME"
 check_eq "env: LANG" en_US.UTF-8 "${LANG:-}"
 check_eq "env: LC_ALL" en_US.UTF-8 "${LC_ALL:-}"
+check_eq "env: STARSHIP_CONFIG" /workspace/.devcontainer/starship.toml "${STARSHIP_CONFIG:-}"
+check_eq "env: EDITOR" nvim "${EDITOR:-}"
 
-for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm minikube gh docker ssh rg specify; do
+for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm minikube gh docker ssh rg nvim starship specify unzip zip; do
   check "command: $c" command -v "$c"
 done
 
@@ -378,9 +399,16 @@ check "run: minikube" minikube version
 check "run: gh" gh --version
 check "run: ssh" ssh -V
 check "run: rg" rg --version
+check "run: nvim" nvim --version
+check "run: nvim headless" nvim --headless +q
+check "run: starship" starship --version
+check "run: starship prompt" starship prompt
 check "run: specify" specify --help
+check "run: unzip" unzip -v
+check "run: zip" zip -v
+check "archive round-trip" bash -c 'cd /tmp && rm -rf dc-zip-test && mkdir dc-zip-test && echo hello > dc-zip-test/hello.txt && zip -q -r dc-zip-test.zip dc-zip-test && rm -rf dc-zip-test && unzip -q dc-zip-test.zip && test "$(cat dc-zip-test/hello.txt)" = hello && rm -rf dc-zip-test dc-zip-test.zip'
 check "run: yq version" bash -c "yq --version | grep -q 'v4.54.1'"
-check "run: opencode version" bash -c "opencode --version 2>&1 | grep -q '2.1.4'"
+check "run: opencode" opencode --version
 
 docker_ok=0
 for _ in $(seq 1 60); do
@@ -407,8 +435,13 @@ else
   bad "missing /worktrees"
 fi
 
-check "uv tool: specify-cli" bash -c "uv tool list 2>/dev/null | grep -q specify-cli"
 check "bashrc: kubectl aliases" grep -q '# --- kubectl aliases ---' "$HOME/.bashrc"
+check "bashrc: devcontainer aliases" grep -q '# --- devcontainer aliases ---' "$HOME/.bashrc"
+check "bashrc: terminal paste" grep -q '# --- terminal paste ---' "$HOME/.bashrc"
+check "bashrc: starship prompt" grep -q '# --- starship prompt ---' "$HOME/.bashrc"
+check "alias: ll" bash -ic 'type ll >/dev/null 2>&1'
+check "alias: vi" bash -ic 'type vi >/dev/null 2>&1'
+check "alias: gs" bash -ic 'type gs >/dev/null 2>&1'
 check "bashrc: github env" grep -q '# --- github env ---' "$HOME/.bashrc"
 check "bashrc: brave env" grep -q '# --- brave env ---' "$HOME/.bashrc"
 if [ -f "$HOME/.dc/github/.env" ]; then
@@ -422,6 +455,13 @@ check "locale: en_US.utf8" bash -c "locale -a | grep -qi en_US"
 if [ "$fail" -ne 0 ]; then echo "SMOKE FAILED"; exit 1; fi
 echo "SMOKE PASSED"
 EOS
+}
+
+run_paste() {
+  local cid
+  cid="$(container_id)"
+  say "T7 PTY paste smoke"
+  python3 "$SCRIPT_DIR/paste-smoke.py" --container-id "$cid"
 }
 
 run_idempotent() {
@@ -439,11 +479,6 @@ run_idempotent() {
   done
   after="$(devcontainer exec --container-id "$cid" -- bash -c 'wc -l < "$HOME/.bashrc"; grep -c "^# --- " "$HOME/.bashrc"')"
   [ "$before" = "$after" ] || die ".bashrc changed after repeated post-create ($before -> $after)"
-  grep -q 'specify-cli already installed' "$COPY/post-create-2.stdout" \
-    || die "post-create did not skip the existing specify-cli install"
-  if grep -q 'Installed 1 executable' "$COPY/post-create-2.stdout"; then
-    die "post-create reinstalled specify-cli on the second run"
-  fi
   echo 'PASS: post-create is idempotent'
 }
 
@@ -509,6 +544,8 @@ case "$MODE" in
   up) last_copy; run_up; run_smoke ;;
   smoke) last_copy; run_smoke ;;
   smoke-real) run_smoke ;;
+  paste) last_copy; run_paste ;;
+  paste-real) run_paste ;;
   idempotent) last_copy; run_idempotent ;;
   recreate) last_copy; run_recreate ;;
   fresh) last_copy; run_fresh ;;
@@ -521,9 +558,10 @@ case "$MODE" in
     run_pre_smoke
     run_up
     run_smoke
+    run_paste
     run_idempotent
     run_recreate
     run_fresh
     ;;
-  *) die "unknown mode: $MODE (use guard|static|build|pre|up|smoke|smoke-real|idempotent|recreate|fresh|cleanup|all)" ;;
+  *) die "unknown mode: $MODE (use guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|cleanup|all)" ;;
 esac

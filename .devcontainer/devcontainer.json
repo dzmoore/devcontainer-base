@@ -32,7 +32,10 @@
   ],
   "containerEnv": {
     "LANG": "en_US.UTF-8",
-    "LC_ALL": "en_US.UTF-8"
+    "LC_ALL": "en_US.UTF-8",
+    "STARSHIP_CONFIG": "/workspace/.devcontainer/starship.toml",
+    "EDITOR": "nvim",
+    "VISUAL": "nvim"
   },
   "remoteEnv": {
     "PATH": "${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin",

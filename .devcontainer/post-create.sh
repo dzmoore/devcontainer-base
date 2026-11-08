@@ -79,7 +79,7 @@ fi
 
 echo "Logging into Helm registry with GitHub token..."
 if [ -n "$github_token" ]; then
-  printf '%s' "$github_token" | helm registry login ghcr.io -u unused --password-stdin 2>/dev/null || true
+  printf '%s' "$github_token" | timeout 15 helm registry login ghcr.io -u unused --password-stdin 2>/dev/null || true
 fi
 
 echo "Setting up kubectl aliases and completion..."
@@ -101,12 +101,46 @@ fi
 EOF
 fi
 
-mkdir -p "$HOME/.local/bin"
-if uv tool list 2>/dev/null | grep -q '^specify-cli ' && [ -x "$HOME/.local/bin/specify" ]; then
-  echo "specify-cli already installed."
-else
-  echo "Installing specify-cli..."
-  uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.16.4
+echo "Verifying build-time tools..."
+nvim --version >/dev/null
+starship --version >/dev/null
+specify --help >/dev/null 2>&1
+
+if ! grep -qF '# --- devcontainer aliases ---' "$HOME/.bashrc" 2>/dev/null; then
+  cat >>"$HOME/.bashrc" <<'EOF'
+
+# --- devcontainer aliases ---
+if [ -f /workspace/.devcontainer/aliases.sh ]; then
+  . /workspace/.devcontainer/aliases.sh
+fi
+EOF
+fi
+
+if ! grep -qF '# --- terminal paste ---' "$HOME/.bashrc" 2>/dev/null; then
+  cat >>"$HOME/.bashrc" <<'EOF'
+
+# --- terminal paste ---
+# Ghostty and some IDE terminals advertise a TERM whose terminfo entry is not
+# present in the container (for example xterm-ghostty). Fall back to a known
+# 256-color terminfo, and harden readline/flow control for reliable paste.
+if [ -t 0 ] && [ -t 1 ]; then
+  if [ -z "${TERM:-}" ] || [ "$TERM" = "dumb" ] || [ "$TERM" = "xterm" ] || ! infocmp "$TERM" >/dev/null 2>&1; then
+    export TERM=xterm-256color
+  fi
+  stty -ixon 2>/dev/null || true
+  bind 'set enable-bracketed-paste on' 2>/dev/null || true
+fi
+EOF
+fi
+
+if ! grep -qF '# --- starship prompt ---' "$HOME/.bashrc" 2>/dev/null; then
+  cat >>"$HOME/.bashrc" <<'EOF'
+
+# --- starship prompt ---
+if command -v starship >/dev/null 2>&1; then
+  eval "$(starship init bash)"
+fi
+EOF
 fi
 
 echo 'Dev container setup complete.'
