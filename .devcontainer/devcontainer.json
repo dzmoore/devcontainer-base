@@ -1,0 +1,49 @@
+{
+  "name": "devcontainer-base",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {},
+    "ghcr.io/devcontainers-extra/features/kubectx-kubens:1": {},
+    "ghcr.io/devcontainers-extra/features/fzf:1": {},
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers-extra/features/bun:1": {},
+    "ghcr.io/devcontainers-extra/features/uv:1": {},
+    "ghcr.io/devcontainers-extra/features/kind:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": false
+    },
+    "ghcr.io/devcontainers/features/python:1": {},
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "remoteUser": "developer",
+  "mounts": [
+    "type=volume,source=opencode-share,target=/home/developer/.local/share/opencode",
+    "type=volume,source=opencode-state,target=/home/developer/.local/state/opencode",
+    "type=volume,source=opentui-cache,target=/home/developer/.local/share/opentui",
+    "type=volume,source=uv-cache,target=/home/developer/.local/share/uv",
+    "type=volume,source=nvim-state,target=/home/developer/.local/state/nvim",
+    "type=volume,source=nvim-share,target=/home/developer/.local/share/nvim",
+    "type=volume,source=worktrees,target=/worktrees",
+    "type=bind,src=${localEnv:HOME}/.devcontainer/github/.env,dst=/home/developer/.dc/github/.env,bind-create-src,ro",
+    "type=bind,src=${localEnv:HOME}/.devcontainer/brave/.env,dst=/home/developer/.dc/brave/.env,bind-create-src,ro"
+  ],
+  "containerEnv": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": "en_US.UTF-8",
+    "STARSHIP_CONFIG": "/workspace/.devcontainer/starship.toml",
+    "EDITOR": "nvim",
+    "VISUAL": "nvim"
+  },
+  "remoteEnv": {
+    "PATH": "${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin",
+    "KUBECONFIG": "/workspace/.kube/config",
+    "OPENCODE_CONFIG": "/workspace/opencode.jsonc"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "waitFor": "postCreateCommand",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace"
+}
