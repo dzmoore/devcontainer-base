@@ -101,10 +101,23 @@ fi
 EOF
 fi
 
+echo "Setting up Helm completion..."
+if ! grep -qF '# --- helm completion ---' "$HOME/.bashrc" 2>/dev/null; then
+  cat >>"$HOME/.bashrc" <<'EOF'
+
+# --- helm completion ---
+if command -v helm >/dev/null 2>&1; then
+  source <(helm completion bash 2>/dev/null)
+fi
+EOF
+fi
+
 echo "Verifying build-time tools..."
 nvim --version >/dev/null
 starship --version >/dev/null
 specify --help >/dev/null 2>&1
+kubectl version --client >/dev/null
+helm version --template '{{.Version}}' >/dev/null
 
 if ! grep -qF '# --- devcontainer aliases ---' "$HOME/.bashrc" 2>/dev/null; then
   cat >>"$HOME/.bashrc" <<'EOF'

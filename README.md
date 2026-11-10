@@ -25,9 +25,9 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 `devcontainer-base` is made for projects that need more than a single runtime, and for workflows that mix local containers, a Kubernetes cluster, and an AI coding agent in the same workspace. It is a good fit for platform, backend, and AI projects that want a consistent environment without maintaining a bespoke Dockerfile for every repository.
 
 - **Polyglot by default** — Node.js, Bun, Python with uv, and Go are ready to use.
-- **Cloud-native tooling** — Docker-in-Docker, Compose, Buildx, kubectl, Helm, kind, minikube, and kubectx/kubens.
+- **Cloud-native tooling** — Docker-in-Docker, Compose, Buildx, kubectl, Helm, kind, and kubectx/kubens.
 - **AI-assisted workflow** — OpenCode, GitHub Spec Kit, and persistent tool state.
-- **Comfortable shell** — Starship prompt, useful aliases, kubectl completion, and paste-safe terminal settings.
+- **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, and paste-safe terminal settings.
 - **Reproducible** — pinned build-time tools and a Dev Container feature lockfile.
 - **Tested** — a smoke suite covers build, runtime, shell paste, idempotency, and volume lifecycle.
 
@@ -38,20 +38,22 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Base** | `debian:bookworm-slim`, non-root `developer` user (UID/GID 1000 by default), passwordless sudo, `en_US.UTF-8` locale, bash |
 | **Languages** | Node.js + npm, Bun, Python 3 + uv, Go |
 | **Containers** | Docker-in-Docker, Docker Compose, Buildx |
-| **Kubernetes** | kubectl, Helm, kind, minikube, kubectx, kubens |
+| **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), curl, OpenSSH client, unzip, zip, yq |
 | **AI & workflow** | OpenCode 2.2.5, Neovim 0.12.6, Starship 1.27.0, GitHub Spec Kit (`specify`) 0.16.4 |
-| **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl completion, bracketed paste, TERM fallback, Starship prompt |
+| **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
 | **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, and `/worktrees` |
 
 > [!NOTE]
-> The upstream tools installed in the Dockerfile (`yq`, OpenCode, Neovim, Starship, and Spec Kit) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
+> The upstream tools installed in the Dockerfile (`yq`, kubectl, Helm, OpenCode, Neovim, Starship, and Spec Kit) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
 
 ### Pinned build-time tools
 
 | Tool | Version |
 | --- | --- |
 | [yq](https://github.com/mikefarah/yq) | `v4.54.1` |
+| [kubectl](https://kubernetes.io/docs/reference/kubectl/) | `v1.37.2` |
+| [Helm](https://helm.sh) | `v4.3.1` |
 | [OpenCode](https://opencode.ai) | `2.2.5` |
 | [Neovim](https://neovim.io) | `v0.12.6` |
 | [Starship](https://starship.rs) | `v1.27.0` |
@@ -84,7 +86,7 @@ Named volumes keep tool state and caches across container rebuilds:
   - The [Dev Containers CLI](https://github.com/devcontainers/cli): `npm install -g @devcontainers/cli`
 
 > [!NOTE]
-> The secret mounts in `devcontainer.json` use `${localEnv:HOME}`. On Windows, use WSL or make sure `HOME` is set in the environment where the Dev Containers tooling runs. The Dockerfile supports `amd64` and `arm64`; the pinned Neovim and yq downloads fail fast on other architectures.
+> The secret mounts in `devcontainer.json` use `${localEnv:HOME}`. On Windows, use WSL or make sure `HOME` is set in the environment where the Dev Containers tooling runs. The Dockerfile supports `amd64` and `arm64`; the pinned Neovim, yq, kubectl, and Helm downloads fail fast on other architectures.
 
 ### Open this repository
 
@@ -157,7 +159,7 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 
 ### Change tool versions
 
-Bump the relevant `ARG` at the top of `.devcontainer/Dockerfile`, then rebuild:
+Bump the relevant `ARG` at the top of `.devcontainer/Dockerfile`, then rebuild. For kubectl and Helm, update the matching per-architecture `SHA256` digest ARGs in the same change:
 
 ```bash
 devcontainer build --workspace-folder .
@@ -172,7 +174,7 @@ devcontainer up --workspace-folder . --remove-existing-container
 ```
 
 > [!NOTE]
-> The runtime smoke test derives the expected yq version from `ARG YQ_VERSION` in `.devcontainer/Dockerfile`, so the assertion stays in step with the pin automatically.
+> The runtime smoke test derives the expected yq, kubectl, and Helm versions from their `ARG`s in `.devcontainer/Dockerfile`, so the assertions stay in step with the pins automatically.
 
 ### Project-local configuration
 
@@ -196,6 +198,13 @@ A few choices are intentional and worth knowing before changing the setup:
 - Mount targets are created and chowned in the image so fresh named volumes are writable by `developer`; `post-create.sh` repairs existing volumes.
 - `post-create.sh` removes VS Code's `credsStore` from `~/.docker/config.json` so Docker registry auth does not fail outside a live VS Code session.
 - Terminal setup falls back to `xterm-256color` when the terminal's terminfo is missing, disables flow control (`stty -ixon`), and enables bracketed paste.
+- kubectl and Helm are installed directly from official release artifacts instead of the `kubectl-helm-minikube` feature. The feature was removed because this setup does not need minikube, and direct installs allow exact pins and digest verification; the feature's Copilot customization is intentionally dropped.
+- The Dockerfile hardcodes the official per-architecture SHA256 digests next to the source URLs and verifies each download with `sha256sum --strict`. The repository, not a same-origin checksum, is the trust anchor.
+- Helm defaults to `v4.3.1`. To use Helm 3, change `HELM_VERSION` to `v3.22.1` and update the matching per-architecture digest ARGs; Helm 3 security support ends on 2027-02-10.
+- Version support is policy-specific: kubectl `v1.37.2` supports Kubernetes 1.36–1.38, while Helm 4.3.x supports Kubernetes 1.34–1.37.
+- Minikube is no longer included. `kind` remains the local-cluster option; re-add the feature or install minikube manually if a project needs it.
+- Existing containers retain minikube and the other old feature binaries until they are recreated. `smoke-real` will fail the new minikube-absence assertions on those containers.
+- The feature's `gnupg2`/`dirmngr` installs and its conditional `jq` install are intentionally gone. Add them explicitly if a project needs GPG verification or jq.
 - The `developer` username is part of the test contract. If you change it, update the Dockerfile default, `remoteUser`, mounts, `remoteEnv`, and smoke tests together.
 
 ## Testing
@@ -278,7 +287,21 @@ It repairs ownership for `developer` and is safe to run repeatedly.
 
 ### `--frozen-lockfile` fails
 
-Run a normal `devcontainer build` or `devcontainer up` to refresh `.devcontainer/devcontainer-lock.json`, review the diff, and commit it. Do not edit the lockfile by hand.
+Run a normal `devcontainer build` or `devcontainer up` to refresh `.devcontainer/devcontainer-lock.json`, review the diff, and commit it. Prefer the CLI over hand edits; the only exception is the deterministic single-entry fallback below.
+
+If CLI regeneration also churns unrelated feature entries, restore the previous lockfile and remove only the stale entry with a small JSON script, then validate with `--frozen-lockfile`. The diff must remove exactly one key and leave every other entry unchanged. For example, when removing `kubectl-helm-minikube`:
+
+```bash
+git checkout -- .devcontainer/devcontainer-lock.json
+python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path('.devcontainer/devcontainer-lock.json')
+d = json.loads(p.read_text())
+d['features'].pop('ghcr.io/devcontainers/features/kubectl-helm-minikube:1', None)
+p.write_text(json.dumps(d, indent=2) + '\n')
+PY
+devcontainer build --workspace-folder . --frozen-lockfile
+```
 
 ### Changing the `developer` user
 
