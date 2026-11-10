@@ -34,7 +34,19 @@ done
 # Repair ownership for existing volumes. Fresh volumes inherit developer
 # ownership from the pre-created directories in the Dockerfile. Chown the
 # parent directories too so tools can create new files under them.
-sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" /worktrees
+sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees
+
+# Kubernetes client-go locks every file listed in KUBECONFIG. On macOS
+# VirtioFS bind mounts the lock file can be created with mode 000, which makes
+# kind fail with "config.lock: permission denied". Keep the writable default
+# kubeconfig on the container volume and do not include a workspace path in
+# KUBECONFIG; merge a project-local config manually if needed.
+echo "Configuring container-local kubeconfig..."
+mkdir -p "$HOME/.kube"
+chmod 700 "$HOME/.kube"
+touch "$HOME/.kube/config"
+chmod 600 "$HOME/.kube/config"
+rm -f "$HOME/.kube/config.lock"
 
 # VS Code's remote-containers integration injects a docker credential helper
 # (credsStore) into ~/.docker/config.json that only works inside a live VS Code

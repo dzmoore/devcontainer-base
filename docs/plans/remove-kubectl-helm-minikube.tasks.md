@@ -83,3 +83,28 @@ Status legend: `[ ]` pending, `[~]` in progress, `[x]` done, `[!]` blocked.
 - Merged config: no `kubectl-helm-minikube` feature, no `minikube-config` mount, no feature-provided Copilot instruction.
 - Runtime: kubectl `v1.37.2`, Helm `v4.3.1`, minikube absent, kubectl and Helm completion working.
 - Optional multi-arch build gate not run; see residual risks in the plan.
+
+## Follow-up — `kind` kubeconfig permission fix
+
+- [x] Reproduce `failed to lock config file: open /workspace/.kube/config.lock: permission denied`
+- [x] Identify the macOS VirtioFS mode-`000` lock-file bug in Kubernetes client-go
+- [x] Move the writable default kubeconfig to `/home/developer/.kube/config`
+- [x] Add a `kubeconfig` named volume at `/home/developer/.kube` so contexts persist across rebuilds
+- [x] Remove `/workspace/.kube/config` from the default `KUBECONFIG`; client-go locks every path, so the VirtioFS path must not be present
+- [x] Document manual project-kubeconfig merging
+- [x] Pre-create and secure the container-local kubeconfig in `post-create.sh`
+- [x] Add static and runtime regression checks
+- [x] Add README troubleshooting and `.gitignore` protection
+- [x] Validate `kind create` and `kind delete` with the home-only path
+- [x] Validate two simultaneous kind clusters and delete-one-keep-one
+- [x] Validate that the `kubeconfig` volume and kind contexts survive container recreation
+- [x] Re-run the full smoke suite on the final config
+- [x] Commit the follow-up fix
+
+### Follow-up validation result
+
+- Two clusters created simultaneously: `dc-kind-a` and `dc-kind-b`.
+- Deleting `dc-kind-a` left `dc-kind-b` healthy and usable.
+- After `test/devcontainer-smoke.sh recreate`, the `kind-dc-kind-b` context and nodes were still available (`Ready`).
+- `fresh` and `cleanup` passed with the new `kubeconfig` volume.
+- `/workspace/.kube/config.lock` was absent at every checkpoint.

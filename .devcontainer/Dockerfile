@@ -71,10 +71,12 @@ RUN mkdir -p \
   /home/$USERNAME/.local/state/nvim \
   /home/$USERNAME/.local/share/nvim \
   /home/$USERNAME/.config/opencode \
+  /home/$USERNAME/.kube \
   /worktrees \
   && chown -R $USERNAME:$USERNAME \
   /home/$USERNAME/.local \
   /home/$USERNAME/.config \
+  /home/$USERNAME/.kube \
   /worktrees
 
 

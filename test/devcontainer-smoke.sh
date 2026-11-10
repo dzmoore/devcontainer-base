@@ -226,6 +226,11 @@ check(container_env.get('VISUAL') == 'nvim', 'containerEnv.VISUAL must be nvim')
 remote_path = dc.get('remoteEnv', {}).get('PATH', '')
 check('/home/developer/.opencode/bin' in remote_path, 'remoteEnv.PATH missing opencode bin')
 check('/home/developer/.local/bin' in remote_path, 'remoteEnv.PATH missing local bin')
+remote_kubeconfig = dc.get('remoteEnv', {}).get('KUBECONFIG', '')
+check(remote_kubeconfig == '/home/developer/.kube/config',
+      'remoteEnv.KUBECONFIG must be the container-local kubeconfig')
+check('/workspace/.kube/config' not in remote_kubeconfig,
+      'remoteEnv.KUBECONFIG must not include the VirtioFS workspace path')
 
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
@@ -233,6 +238,9 @@ for mount in dc.get('mounts', []):
     check(target.startswith('/home/developer') or target == '/worktrees',
           f'mount target outside developer home: {target}')
     check('/home/vscode' not in target, f'vscode mount target: {target}')
+check(any('source=kubeconfig' in mount and 'target=/home/developer/.kube' in mount
+          for mount in dc.get('mounts', [])),
+      'devcontainer.json must mount the kubeconfig volume at /home/developer/.kube')
 
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
@@ -286,8 +294,8 @@ check('export $(' not in post, 'post-create.sh uses unsafe export $(...)')
 check('[ -f "$GITHUB_ENV_FILE" ]' in post, 'post-create.sh must use -f for env files')
 check('# --- github env ---' in post, 'post-create.sh missing github env marker')
 check('# --- brave env ---' in post, 'post-create.sh missing brave env marker')
-check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" /worktrees' in post,
-      'post-create.sh must chown .local, .config, and /worktrees to the runtime user')
+check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees' in post,
+      'post-create.sh must chown .local, .config, .kube, and /worktrees to the runtime user')
 check('specify --help' in post, 'post-create.sh must verify specify-cli')
 check('yq --version' in post, 'post-create.sh must verify yq')
 check('# --- helm completion ---' in post, 'post-create.sh missing helm completion marker')
@@ -297,6 +305,12 @@ check("helm version --template '{{.Version}}'" in post,
       'post-create.sh must verify the exact Helm version')
 check(post.find('# --- helm completion ---') > post.find('# --- kubectl aliases ---'),
       'helm completion must be a separate block after the kubectl block')
+check('touch "$HOME/.kube/config"' in post,
+      'post-create.sh must create the container-local kubeconfig')
+check('chmod 600 "$HOME/.kube/config"' in post,
+      'post-create.sh must secure the container-local kubeconfig')
+check('rm -f "$HOME/.kube/config.lock"' in post,
+      'post-create.sh must remove stale kubeconfig lock files')
 check('# --- devcontainer aliases ---' in post, 'post-create.sh must load the aliases config')
 check('# --- terminal paste ---' in post, 'post-create.sh must harden terminal paste handling')
 check('# --- starship prompt ---' in post, 'post-create.sh must load the Starship prompt')
@@ -389,7 +403,7 @@ check "dind: docker buildx" docker buildx version
 
 for d in "$HOME/.local/share/opencode" "$HOME/.local/state/opencode" \
          "$HOME/.local/share/opentui" "$HOME/.local/share/uv" \
-         "$HOME/.local/state/nvim" "$HOME/.local/share/nvim"; do
+         "$HOME/.local/state/nvim" "$HOME/.local/share/nvim" "$HOME/.kube"; do
   if [ -d "$d" ]; then
     check_eq "owner: $d" developer "$(stat -c '%U' "$d")"
   else
@@ -429,6 +443,7 @@ check_eq "env: LANG" en_US.UTF-8 "${LANG:-}"
 check_eq "env: LC_ALL" en_US.UTF-8 "${LC_ALL:-}"
 check_eq "env: STARSHIP_CONFIG" /workspace/.devcontainer/starship.toml "${STARSHIP_CONFIG:-}"
 check_eq "env: EDITOR" nvim "${EDITOR:-}"
+check_eq "env: KUBECONFIG" /home/developer/.kube/config "${KUBECONFIG:-}"
 
 for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
   check "command: $c" command -v "$c"
@@ -455,6 +470,8 @@ check "run: fzf" fzf --version
 check "run: kind" kind --version
 check "run: kubectl" kubectl version --client
 check "run: helm" helm version --short
+check "kubeconfig: writable" bash -c 'test -w "$HOME/.kube/config"'
+check "kubeconfig: client-go lock" bash -c 'kubectl config set-context smoke-test --cluster=smoke --user=smoke >/dev/null && kubectl config delete-context smoke-test >/dev/null'
 check "run: gh" gh --version
 check "run: ssh" ssh -V
 check "run: rg" rg --version
@@ -481,7 +498,7 @@ check "dind: docker buildx" docker buildx version
 
 for d in "$HOME/.local/share/opencode" "$HOME/.local/state/opencode" \
          "$HOME/.local/share/opentui" "$HOME/.local/share/uv" \
-         "$HOME/.local/state/nvim" "$HOME/.local/share/nvim"; do
+         "$HOME/.local/state/nvim" "$HOME/.local/share/nvim" "$HOME/.kube"; do
   if [ -d "$d" ]; then
     check_eq "owner: $d" developer "$(stat -c '%U' "$d")"
   else

@@ -42,7 +42,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), curl, OpenSSH client, unzip, zip, yq |
 | **AI & workflow** | OpenCode 2.2.6, Neovim 0.12.6, Starship 1.27.0, GitHub Spec Kit (`specify`) 1.3.2 |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
-| **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, and `/worktrees` |
+| **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, Kubernetes config, and `/worktrees` |
 
 > [!NOTE]
 > The upstream tools installed in the Dockerfile (`yq`, kubectl, Helm, OpenCode, Neovim, Starship, and Spec Kit) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
@@ -71,10 +71,11 @@ Named volumes keep tool state and caches across container rebuilds:
 | `uv-cache` | `~/.local/share/uv` | uv package cache |
 | `nvim-state` | `~/.local/state/nvim` | Neovim state |
 | `nvim-share` | `~/.local/share/nvim` | Neovim plugins and data |
+| `kubeconfig` | `~/.kube` | Kubernetes config and kind cluster contexts |
 | `worktrees` | `/worktrees` | Git worktrees that survive a rebuild |
 
 > [!WARNING]
-> The volume names are global to the Docker daemon. Projects using this base share the same state and caches. Rename the `source=` values in `devcontainer.json` if you need per-project isolation.
+> The volume names are global to the Docker daemon. Projects using this base share the same state and caches. Rename the `source=` values in `devcontainer.json` if you need per-project isolation. The `kubeconfig` volume contains cluster credentials; rename it per project if the clusters must be isolated.
 
 ## Quick start
 
@@ -178,9 +179,9 @@ devcontainer up --workspace-folder . --remove-existing-container
 
 ### Project-local configuration
 
-The config points a few tools at workspace files:
+The config points a few tools at workspace files and keeps the writable Kubernetes config inside the container:
 
-- `KUBECONFIG=/workspace/.kube/config` — add a kubeconfig at `.kube/config` if you want the container to use it.
+- `KUBECONFIG=/home/developer/.kube/config` — the container-local file lives in the `kubeconfig` volume and is where kind and kubectl write new contexts. It is intentionally the only default path: client-go locks every file in `KUBECONFIG`, and a workspace path on macOS VirtioFS can break `kind`. To use a project kubeconfig at `.kube/config`, merge or copy it manually; see [kind fails with `config.lock: permission denied`](#kind-fails-with-configlock-permission-denied).
 - `OPENCODE_CONFIG=/workspace/opencode.jsonc` — add a project-specific OpenCode config at `opencode.jsonc`.
 - `STARSHIP_CONFIG=/workspace/.devcontainer/starship.toml` — the prompt config shipped with this base.
 
@@ -205,6 +206,7 @@ A few choices are intentional and worth knowing before changing the setup:
 - Minikube is no longer included. `kind` remains the local-cluster option; re-add the feature or install minikube manually if a project needs it.
 - Existing containers retain minikube and the other old feature binaries until they are recreated. `smoke-real` will fail the new minikube-absence assertions on those containers.
 - The feature's `gnupg2`/`dirmngr` installs and its conditional `jq` install are intentionally gone. Add them explicitly if a project needs GPG verification or jq.
+- `KUBECONFIG` points only at the container-local `/home/developer/.kube/config`. Kubernetes client-go locks every file listed in `KUBECONFIG`; on macOS VirtioFS bind mounts a lock file can be created with mode `000`, which breaks `kind`. The `kubeconfig` volume keeps this directory on the Docker volume filesystem and preserves contexts across rebuilds. `post-create.sh` creates the file, sets it to `0600`, and removes stale lock files. Do not add `/workspace/.kube/config` to the default `KUBECONFIG`; merge a project config manually instead.
 - The `developer` username is part of the test contract. If you change it, update the Dockerfile default, `remoteUser`, mounts, `remoteEnv`, and smoke tests together.
 
 ## Testing
@@ -266,6 +268,28 @@ CID=<container-id> test/devcontainer-smoke.sh paste-real
 ### Docker is not available inside the container
 
 The Docker-in-Docker feature needs a working Docker daemon on the host and a privileged container. Make sure Docker is running, then restart or rebuild the container. The smoke suite waits up to two minutes for the daemon to start.
+
+### `kind` fails with `config.lock: permission denied`
+
+This is a macOS VirtioFS issue: Kubernetes client-go locks every file listed in `KUBECONFIG`, and VirtioFS can create the lock file with mode `000`, so the next open fails. The default `KUBECONFIG` uses only the container-local `/home/developer/.kube/config`, which lives in the `kubeconfig` volume.
+
+If you overrode `KUBECONFIG` to include a workspace path, remove it:
+
+```bash
+export KUBECONFIG=/home/developer/.kube/config
+rm -f /workspace/.kube/config.lock
+```
+
+To merge a project kubeconfig into the container-local file, copy it to a temporary path on the container filesystem before flattening, so the VirtioFS path is never in `KUBECONFIG`:
+
+```bash
+cp /workspace/.kube/config /tmp/project-kubeconfig
+KUBECONFIG="$HOME/.kube/config:/tmp/project-kubeconfig" kubectl config view --flatten > "$HOME/.kube/config.merged"
+mv "$HOME/.kube/config.merged" "$HOME/.kube/config"
+rm -f /tmp/project-kubeconfig
+```
+
+If you need a project config for read-only commands and are not using kind, you can set `KUBECONFIG=/workspace/.kube/config` explicitly; writes may still fail on macOS VirtioFS.
 
 ### Host secret mounts are empty or are directories
 
