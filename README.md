@@ -8,7 +8,7 @@
 
 [![Dev Containers](https://img.shields.io/badge/Dev_Containers-spec-2753E3?style=flat-square&logo=visualstudiocode&logoColor=white)](https://containers.dev)
 [![Debian 12](https://img.shields.io/badge/Debian-12-A81D33?style=flat-square&logo=debian&logoColor=white)](https://www.debian.org)
-[![OpenCode](https://img.shields.io/badge/OpenCode-2.2.5-000000?style=flat-square)](https://opencode.ai)
+[![OpenCode](https://img.shields.io/badge/OpenCode-2.2.6-000000?style=flat-square)](https://opencode.ai)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
 
 [Overview](#overview) • [What's included](#whats-included) • [Quick start](#quick-start) • [Use it in your project](#use-it-in-your-project) • [Configuration](#configuration) • [Testing](#testing) • [Troubleshooting](#troubleshooting)
@@ -40,7 +40,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Containers** | Docker-in-Docker, Docker Compose, Buildx |
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), curl, OpenSSH client, unzip, zip, yq |
-| **AI & workflow** | OpenCode 2.2.5, Neovim 0.12.6, Starship 1.27.0, GitHub Spec Kit (`specify`) 0.16.4 |
+| **AI & workflow** | OpenCode 2.2.6, Neovim 0.12.6, Starship 1.27.0, GitHub Spec Kit (`specify`) 1.3.2 |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
 | **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, and `/worktrees` |
 
@@ -51,13 +51,13 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 
 | Tool | Version |
 | --- | --- |
-| [yq](https://github.com/mikefarah/yq) | `v4.54.1` |
+| [yq](https://github.com/mikefarah/yq) | `v4.54.3` |
 | [kubectl](https://kubernetes.io/docs/reference/kubectl/) | `v1.37.2` |
 | [Helm](https://helm.sh) | `v4.3.1` |
-| [OpenCode](https://opencode.ai) | `2.2.5` |
+| [OpenCode](https://opencode.ai) | `2.2.6` |
 | [Neovim](https://neovim.io) | `v0.12.6` |
 | [Starship](https://starship.rs) | `v1.27.0` |
-| [GitHub Spec Kit](https://github.com/github/spec-kit) (`specify`) | `v0.16.4` |
+| [GitHub Spec Kit](https://github.com/github/spec-kit) (`specify`) | `v1.3.2` |
 
 ### Persistent volumes
 
