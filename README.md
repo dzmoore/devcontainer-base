@@ -172,7 +172,7 @@ devcontainer up --workspace-folder . --remove-existing-container
 ```
 
 > [!NOTE]
-> The runtime smoke test asserts the pinned yq version (`v4.54.1`). Update the assertion in `test/devcontainer-smoke.sh` when you bump yq.
+> The runtime smoke test derives the expected yq version from `ARG YQ_VERSION` in `.devcontainer/Dockerfile`, so the assertion stays in step with the pin automatically.
 
 ### Project-local configuration
 

@@ -8,11 +8,11 @@ USER root
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
-ARG YQ_VERSION=v4.54.1
-ARG OPENCODE_VERSION=2.2.5
+ARG YQ_VERSION=v4.54.3
+ARG OPENCODE_VERSION=2.2.6
 ARG NVIM_VERSION=v0.12.6
 ARG STARSHIP_VERSION=v1.27.0
-ARG SPECIFY_VERSION=v0.16.4
+ARG SPECIFY_VERSION=v1.3.2
 
 # Install core development tools stripped out of the slim image.
 # libatomic1 is required by the official Node.js arm64 binaries; openssh-client
@@ -80,12 +80,12 @@ RUN arch="$(dpkg --print-architecture)" \
 # self-contained apart from libc/libm/libgcc, which bookworm already provides.
 RUN arch="$(dpkg --print-architecture)" \
   && case "$arch" in \
-       amd64) nvim_arch=x86_64 ;; \
-       arm64) nvim_arch=arm64 ;; \
-       *) echo "Unsupported architecture for Neovim: $arch" >&2; exit 1 ;; \
-     esac \
+  amd64) nvim_arch=x86_64 ;; \
+  arm64) nvim_arch=arm64 ;; \
+  *) echo "Unsupported architecture for Neovim: $arch" >&2; exit 1 ;; \
+  esac \
   && curl -fsSL "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-${nvim_arch}.tar.gz" \
-    -o /tmp/nvim.tar.gz \
+  -o /tmp/nvim.tar.gz \
   && tar -xzf /tmp/nvim.tar.gz -C /opt \
   && mv "/opt/nvim-linux-${nvim_arch}" /opt/nvim \
   && ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim \
@@ -100,7 +100,7 @@ RUN curl -fsSL https://starship.rs/install.sh -o /tmp/starship-install.sh \
 
 # Install the spec-kit CLI at build time so post-create only has to verify it.
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
-    pipx install "git+https://github.com/github/spec-kit.git@${SPECIFY_VERSION}" \
+  pipx install "git+https://github.com/github/spec-kit.git@${SPECIFY_VERSION}" \
   && specify --help >/dev/null
 
 USER $USERNAME

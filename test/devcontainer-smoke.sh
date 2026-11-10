@@ -407,7 +407,8 @@ check "run: specify" specify --help
 check "run: unzip" unzip -v
 check "run: zip" zip -v
 check "archive round-trip" bash -c 'cd /tmp && rm -rf dc-zip-test && mkdir dc-zip-test && echo hello > dc-zip-test/hello.txt && zip -q -r dc-zip-test.zip dc-zip-test && rm -rf dc-zip-test && unzip -q dc-zip-test.zip && test "$(cat dc-zip-test/hello.txt)" = hello && rm -rf dc-zip-test dc-zip-test.zip'
-check "run: yq version" bash -c "yq --version | grep -q 'v4.54.1'"
+yq_expected="$(sed -n 's/^ARG YQ_VERSION=//p' /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"')"
+check "run: yq version" bash -c "yq --version | grep -qF '$yq_expected'"
 check "run: opencode" opencode --version
 
 docker_ok=0
