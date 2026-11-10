@@ -3,9 +3,9 @@
 #
 # Destructive modes (build/up/pre/idempotent/fresh) run against a disposable
 # copy of the repo under $HOME and use prefixed volume names for the repo's own
-# mounts. Feature-provided volumes (for example minikube-config) are not
-# rewritten; the smoke tests do not write to them. The real repo's container
-# and volumes are never modified by this script.
+# mounts. Named volumes declared outside devcontainer.json are not rewritten;
+# the smoke tests do not write to them. The real repo's container and volumes
+# are never modified by this script.
 #
 # Usage: test/devcontainer-smoke.sh [guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|cleanup|all]
 # Set CID=<container-id> for smoke-real.
@@ -207,6 +207,9 @@ except Exception as e:
 features = set(dc.get('features', {}))
 locked = set(lock.get('features', {}))
 check(features == locked, f'feature/lock mismatch: missing={sorted(features-locked)} extra={sorted(locked-features)}')
+feature = 'ghcr.io/devcontainers/features/kubectl-helm-minikube:1'
+check(feature not in features, f'{feature} must be absent from devcontainer.json features')
+check(feature not in locked, f'{feature} must be absent from devcontainer-lock.json features')
 check(dc.get('remoteUser') == 'developer', 'remoteUser must be developer')
 check(dc.get('postCreateCommand') == 'bash .devcontainer/post-create.sh', 'postCreateCommand must run post-create.sh')
 check(dc.get('waitFor') == 'postCreateCommand', 'waitFor must be postCreateCommand')
@@ -223,6 +226,11 @@ check(container_env.get('VISUAL') == 'nvim', 'containerEnv.VISUAL must be nvim')
 remote_path = dc.get('remoteEnv', {}).get('PATH', '')
 check('/home/developer/.opencode/bin' in remote_path, 'remoteEnv.PATH missing opencode bin')
 check('/home/developer/.local/bin' in remote_path, 'remoteEnv.PATH missing local bin')
+remote_kubeconfig = dc.get('remoteEnv', {}).get('KUBECONFIG', '')
+check(remote_kubeconfig == '/home/developer/.kube/config',
+      'remoteEnv.KUBECONFIG must be the container-local kubeconfig')
+check('/workspace/.kube/config' not in remote_kubeconfig,
+      'remoteEnv.KUBECONFIG must not include the VirtioFS workspace path')
 
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
@@ -230,12 +238,20 @@ for mount in dc.get('mounts', []):
     check(target.startswith('/home/developer') or target == '/worktrees',
           f'mount target outside developer home: {target}')
     check('/home/vscode' not in target, f'vscode mount target: {target}')
+check(any('source=kubeconfig' in mount and 'target=/home/developer/.kube' in mount
+          for mount in dc.get('mounts', [])),
+      'devcontainer.json must mount the kubeconfig volume at /home/developer/.kube')
 
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
       'Dockerfile useradd must set --shell /bin/bash')
 for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip'):
     check(pkg in dockerfile, f'Dockerfile must install {pkg}')
+apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*', dockerfile)
+check(apt_block is not None, 'Dockerfile apt package block not found')
+if apt_block:
+    check(re.search(r'(?m)^\s*bash-completion\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
+          'Dockerfile apt package block must install bash-completion')
 check(re.search(r'^ENV LANG=en_US\.UTF-8', dockerfile, re.M) is not None,
       'Dockerfile must set ENV LANG=en_US.UTF-8')
 check('chown -R $USERNAME:$USERNAME' in dockerfile,
@@ -243,8 +259,30 @@ check('chown -R $USERNAME:$USERNAME' in dockerfile,
 check('/home/$USERNAME/.local' in dockerfile and '/home/$USERNAME/.config' in dockerfile,
       'Dockerfile must chown the .local and .config parents')
 check('/worktrees' in dockerfile, 'Dockerfile must pre-create /worktrees')
-for arg in ('NVIM_VERSION', 'STARSHIP_VERSION', 'SPECIFY_VERSION'):
-    check(arg in dockerfile, f'Dockerfile must pin {arg}')
+for arg in ('NVIM_VERSION', 'STARSHIP_VERSION', 'SPECIFY_VERSION',
+            'KUBECTL_VERSION', 'HELM_VERSION',
+            'KUBECTL_SHA256_AMD64', 'KUBECTL_SHA256_ARM64',
+            'HELM_SHA256_AMD64', 'HELM_SHA256_ARM64'):
+    check(re.search(rf'^ARG {re.escape(arg)}=\S+', dockerfile, re.M) is not None,
+          f'Dockerfile must pin {arg}')
+for arg in ('KUBECTL_SHA256_AMD64', 'KUBECTL_SHA256_ARM64', 'HELM_SHA256_AMD64', 'HELM_SHA256_ARM64'):
+    digest = re.search(rf'^ARG {re.escape(arg)}=(\S+)\s*$', dockerfile, re.M)
+    check(digest is not None and re.fullmatch(r'[0-9a-f]{64}', digest.group(1)) is not None,
+          f'Dockerfile {arg} must be 64-character lowercase hex')
+check(re.search(r'dl\.k8s\.io/release/\$\{KUBECTL_VERSION\}/bin/linux/\$\{arch\}/kubectl', dockerfile) is not None,
+      'Dockerfile must download kubectl from dl.k8s.io with ${KUBECTL_VERSION} and ${arch}')
+helm_url = re.search(
+    r'https://get\.helm\.sh/(?:\$helm_asset|helm-\$\{HELM_VERSION\}-linux-\$\{arch\}\.tar\.gz)',
+    dockerfile)
+check(helm_url is not None
+      and re.search(r'helm-\$\{HELM_VERSION\}-linux-\$\{arch\}\.tar\.gz', dockerfile) is not None,
+      'Dockerfile must download the canonical Helm tarball from get.helm.sh with ${HELM_VERSION} and ${arch}')
+check(dockerfile.count('sha256sum --strict -c -') >= 2,
+      'Dockerfile must verify both downloads with sha256sum --strict -c -')
+check("printf '%s  kubectl\\n'" in dockerfile,
+      'Dockerfile must synthesize the kubectl checksum line')
+check("printf '%s  %s\\n'" in dockerfile,
+      'Dockerfile must synthesize the Helm checksum line')
 check('nvim-linux-${nvim_arch}.tar.gz' in dockerfile, 'Dockerfile must install Neovim')
 check('starship.rs/install.sh' in dockerfile, 'Dockerfile must install Starship')
 check('pipx install' in dockerfile, 'Dockerfile must install specify-cli')
@@ -256,10 +294,23 @@ check('export $(' not in post, 'post-create.sh uses unsafe export $(...)')
 check('[ -f "$GITHUB_ENV_FILE" ]' in post, 'post-create.sh must use -f for env files')
 check('# --- github env ---' in post, 'post-create.sh missing github env marker')
 check('# --- brave env ---' in post, 'post-create.sh missing brave env marker')
-check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" /worktrees' in post,
-      'post-create.sh must chown .local, .config, and /worktrees to the runtime user')
+check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees' in post,
+      'post-create.sh must chown .local, .config, .kube, and /worktrees to the runtime user')
 check('specify --help' in post, 'post-create.sh must verify specify-cli')
 check('yq --version' in post, 'post-create.sh must verify yq')
+check('# --- helm completion ---' in post, 'post-create.sh missing helm completion marker')
+check('helm completion bash' in post, 'post-create.sh must set up helm completion')
+check('kubectl version --client' in post, 'post-create.sh must verify kubectl')
+check("helm version --template '{{.Version}}'" in post,
+      'post-create.sh must verify the exact Helm version')
+check(post.find('# --- helm completion ---') > post.find('# --- kubectl aliases ---'),
+      'helm completion must be a separate block after the kubectl block')
+check('touch "$HOME/.kube/config"' in post,
+      'post-create.sh must create the container-local kubeconfig')
+check('chmod 600 "$HOME/.kube/config"' in post,
+      'post-create.sh must secure the container-local kubeconfig')
+check('rm -f "$HOME/.kube/config.lock"' in post,
+      'post-create.sh must remove stale kubeconfig lock files')
 check('# --- devcontainer aliases ---' in post, 'post-create.sh must load the aliases config')
 check('# --- terminal paste ---' in post, 'post-create.sh must harden terminal paste handling')
 check('# --- starship prompt ---' in post, 'post-create.sh must load the Starship prompt')
@@ -311,9 +362,21 @@ check_eq "identity: shell" /bin/bash "$(getent passwd developer | cut -d: -f7)"
 check "identity: passwordless sudo" sudo -n true
 check_eq "home" /home/developer "$HOME"
 
-for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm minikube gh docker ssh rg nvim starship specify unzip zip; do
+for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
   check "command: $c" command -v "$c"
 done
+
+arg() { sed -n "s/^ARG $1=//p" /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"'; }
+kubectl_expected="$(arg KUBECTL_VERSION)"
+helm_expected="$(arg HELM_VERSION)"
+check "dockerfile: KUBECTL_VERSION" test -n "$kubectl_expected"
+check "dockerfile: HELM_VERSION" test -n "$helm_expected"
+check_eq "kubectl version" "$kubectl_expected" \
+  "$(kubectl version --client -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["clientVersion"]["gitVersion"])')"
+check_eq "helm version" "$helm_expected" \
+  "$(helm version --template '{{.Version}}')"
+check "minikube absent" bash -c '! command -v minikube'
+check "package: bash-completion" dpkg -s bash-completion
 
 check "run: node" node --version
 check "run: npm" npm --version
@@ -340,7 +403,7 @@ check "dind: docker buildx" docker buildx version
 
 for d in "$HOME/.local/share/opencode" "$HOME/.local/state/opencode" \
          "$HOME/.local/share/opentui" "$HOME/.local/share/uv" \
-         "$HOME/.local/state/nvim" "$HOME/.local/share/nvim"; do
+         "$HOME/.local/state/nvim" "$HOME/.local/share/nvim" "$HOME/.kube"; do
   if [ -d "$d" ]; then
     check_eq "owner: $d" developer "$(stat -c '%U' "$d")"
   else
@@ -380,10 +443,22 @@ check_eq "env: LANG" en_US.UTF-8 "${LANG:-}"
 check_eq "env: LC_ALL" en_US.UTF-8 "${LC_ALL:-}"
 check_eq "env: STARSHIP_CONFIG" /workspace/.devcontainer/starship.toml "${STARSHIP_CONFIG:-}"
 check_eq "env: EDITOR" nvim "${EDITOR:-}"
+check_eq "env: KUBECONFIG" /home/developer/.kube/config "${KUBECONFIG:-}"
 
-for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm minikube gh docker ssh rg nvim starship specify unzip zip; do
+for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
   check "command: $c" command -v "$c"
 done
+
+arg() { sed -n "s/^ARG $1=//p" /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"'; }
+kubectl_expected="$(arg KUBECTL_VERSION)"
+helm_expected="$(arg HELM_VERSION)"
+check "dockerfile: KUBECTL_VERSION" test -n "$kubectl_expected"
+check "dockerfile: HELM_VERSION" test -n "$helm_expected"
+check_eq "kubectl version" "$kubectl_expected" \
+  "$(kubectl version --client -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["clientVersion"]["gitVersion"])')"
+check_eq "helm version" "$helm_expected" \
+  "$(helm version --template '{{.Version}}')"
+check "minikube absent" bash -c '! command -v minikube'
 
 check "run: node" node --version
 check "run: npm" npm --version
@@ -395,7 +470,8 @@ check "run: fzf" fzf --version
 check "run: kind" kind --version
 check "run: kubectl" kubectl version --client
 check "run: helm" helm version --short
-check "run: minikube" minikube version
+check "kubeconfig: writable" bash -c 'test -w "$HOME/.kube/config"'
+check "kubeconfig: client-go lock" bash -c 'kubectl config set-context smoke-test --cluster=smoke --user=smoke >/dev/null && kubectl config delete-context smoke-test >/dev/null'
 check "run: gh" gh --version
 check "run: ssh" ssh -V
 check "run: rg" rg --version
@@ -407,7 +483,8 @@ check "run: specify" specify --help
 check "run: unzip" unzip -v
 check "run: zip" zip -v
 check "archive round-trip" bash -c 'cd /tmp && rm -rf dc-zip-test && mkdir dc-zip-test && echo hello > dc-zip-test/hello.txt && zip -q -r dc-zip-test.zip dc-zip-test && rm -rf dc-zip-test && unzip -q dc-zip-test.zip && test "$(cat dc-zip-test/hello.txt)" = hello && rm -rf dc-zip-test dc-zip-test.zip'
-check "run: yq version" bash -c "yq --version | grep -q 'v4.54.1'"
+yq_expected="$(sed -n 's/^ARG YQ_VERSION=//p' /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"')"
+check "run: yq version" bash -c "yq --version | grep -qF '$yq_expected'"
 check "run: opencode" opencode --version
 
 docker_ok=0
@@ -421,7 +498,7 @@ check "dind: docker buildx" docker buildx version
 
 for d in "$HOME/.local/share/opencode" "$HOME/.local/state/opencode" \
          "$HOME/.local/share/opentui" "$HOME/.local/share/uv" \
-         "$HOME/.local/state/nvim" "$HOME/.local/share/nvim"; do
+         "$HOME/.local/state/nvim" "$HOME/.local/share/nvim" "$HOME/.kube"; do
   if [ -d "$d" ]; then
     check_eq "owner: $d" developer "$(stat -c '%U' "$d")"
   else
@@ -439,6 +516,10 @@ check "bashrc: kubectl aliases" grep -q '# --- kubectl aliases ---' "$HOME/.bash
 check "bashrc: devcontainer aliases" grep -q '# --- devcontainer aliases ---' "$HOME/.bashrc"
 check "bashrc: terminal paste" grep -q '# --- terminal paste ---' "$HOME/.bashrc"
 check "bashrc: starship prompt" grep -q '# --- starship prompt ---' "$HOME/.bashrc"
+check "bashrc: helm completion" grep -q '# --- helm completion ---' "$HOME/.bashrc"
+check "bash-completion: _init_completion" bash -ic 'declare -F _init_completion'
+check "completion: kubectl" bash -ic 'complete -p kubectl | grep -q __start_kubectl'
+check "completion: helm" bash -ic 'complete -p helm | grep -q __start_helm'
 check "alias: ll" bash -ic 'type ll >/dev/null 2>&1'
 check "alias: vi" bash -ic 'type vi >/dev/null 2>&1'
 check "alias: gs" bash -ic 'type gs >/dev/null 2>&1'

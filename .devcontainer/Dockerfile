@@ -8,11 +8,20 @@ USER root
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
-ARG YQ_VERSION=v4.54.1
-ARG OPENCODE_VERSION=2.2.5
+ARG YQ_VERSION=v4.54.3
+ARG OPENCODE_VERSION=2.2.6
 ARG NVIM_VERSION=v0.12.6
 ARG STARSHIP_VERSION=v1.27.0
-ARG SPECIFY_VERSION=v0.16.4
+ARG SPECIFY_VERSION=v1.3.2
+
+# kubectl: https://dl.k8s.io/release/v1.37.2/bin/linux/{amd64,arm64}/kubectl.sha256
+# Helm:   https://get.helm.sh/helm-v4.3.1-linux-{amd64,arm64}.tar.gz.sha256sum
+ARG KUBECTL_VERSION=v1.37.2
+ARG KUBECTL_SHA256_AMD64=c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4
+ARG KUBECTL_SHA256_ARM64=fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509
+ARG HELM_VERSION=v4.3.1
+ARG HELM_SHA256_AMD64=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
+ARG HELM_SHA256_ARM64=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88
 
 # Install core development tools stripped out of the slim image.
 # libatomic1 is required by the official Node.js arm64 binaries; openssh-client
@@ -26,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   libatomic1 \
   openssh-client \
   ripgrep \
+  bash-completion \
   locales \
   unzip \
   zip \
@@ -61,10 +71,12 @@ RUN mkdir -p \
   /home/$USERNAME/.local/state/nvim \
   /home/$USERNAME/.local/share/nvim \
   /home/$USERNAME/.config/opencode \
+  /home/$USERNAME/.kube \
   /worktrees \
   && chown -R $USERNAME:$USERNAME \
   /home/$USERNAME/.local \
   /home/$USERNAME/.config \
+  /home/$USERNAME/.kube \
   /worktrees
 
 
@@ -80,12 +92,12 @@ RUN arch="$(dpkg --print-architecture)" \
 # self-contained apart from libc/libm/libgcc, which bookworm already provides.
 RUN arch="$(dpkg --print-architecture)" \
   && case "$arch" in \
-       amd64) nvim_arch=x86_64 ;; \
-       arm64) nvim_arch=arm64 ;; \
-       *) echo "Unsupported architecture for Neovim: $arch" >&2; exit 1 ;; \
-     esac \
+  amd64) nvim_arch=x86_64 ;; \
+  arm64) nvim_arch=arm64 ;; \
+  *) echo "Unsupported architecture for Neovim: $arch" >&2; exit 1 ;; \
+  esac \
   && curl -fsSL "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-${nvim_arch}.tar.gz" \
-    -o /tmp/nvim.tar.gz \
+  -o /tmp/nvim.tar.gz \
   && tar -xzf /tmp/nvim.tar.gz -C /opt \
   && mv "/opt/nvim-linux-${nvim_arch}" /opt/nvim \
   && ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim \
@@ -100,8 +112,33 @@ RUN curl -fsSL https://starship.rs/install.sh -o /tmp/starship-install.sh \
 
 # Install the spec-kit CLI at build time so post-create only has to verify it.
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
-    pipx install "git+https://github.com/github/spec-kit.git@${SPECIFY_VERSION}" \
+  pipx install "git+https://github.com/github/spec-kit.git@${SPECIFY_VERSION}" \
   && specify --help >/dev/null
+
+# Install kubectl and Helm from official release artifacts. Digests are pinned
+# per architecture in the ARGs above; source URLs are recorded with the ARGs.
+RUN set -eu; \
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) kubectl_sha256="${KUBECTL_SHA256_AMD64}"; helm_sha256="${HELM_SHA256_AMD64}" ;; \
+    arm64) kubectl_sha256="${KUBECTL_SHA256_ARM64}"; helm_sha256="${HELM_SHA256_ARM64}" ;; \
+    *) echo "Unsupported architecture for kubectl/Helm: $arch" >&2; exit 1 ;; \
+  esac; \
+  tmp="$(mktemp -d)"; \
+  trap 'rm -rf "$tmp"' 0; \
+  curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+    -o "$tmp/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl"; \
+  printf '%s  kubectl\n' "$kubectl_sha256" | (cd "$tmp" && sha256sum --strict -c -); \
+  install -m 0755 "$tmp/kubectl" /usr/local/bin/kubectl; \
+  helm_asset="helm-${HELM_VERSION}-linux-${arch}.tar.gz"; \
+  curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+    -o "$tmp/$helm_asset" "https://get.helm.sh/$helm_asset"; \
+  printf '%s  %s\n' "$helm_sha256" "$helm_asset" | (cd "$tmp" && sha256sum --strict -c -); \
+  tar -xzf "$tmp/$helm_asset" -C "$tmp"; \
+  install -m 0755 "$tmp/linux-${arch}/helm" /usr/local/bin/helm; \
+  kubectl version --client; \
+  helm version --template '{{.Version}}'; \
+  echo
 
 USER $USERNAME
 
