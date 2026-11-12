@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Deterministic smoke test for this devcontainer.
 #
-# Destructive modes (build/up/pre/idempotent/fresh) run against a disposable
+# Destructive modes (build/up/pre/idempotent/recreate/fresh/tz) run against a disposable
 # copy of the repo under $HOME and use prefixed volume names for the repo's own
 # mounts. Named volumes declared outside devcontainer.json are not rewritten;
 # the smoke tests do not write to them. The real repo's container and volumes
 # are never modified by this script.
 #
-# Usage: test/devcontainer-smoke.sh [guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|cleanup|all]
-# Set CID=<container-id> for smoke-real.
+# Usage: test/devcontainer-smoke.sh [guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all]
+# Set CID=<container-id> for smoke-real and paste-real.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +22,11 @@ LAST_COPY_FILE="$SMOKE_ROOT/last-copy"
 
 say() { printf '\n== %s ==\n' "$*"; }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+check_eq_host() {
+  local n="$1" e="$2" a="$3"
+  [ "$e" = "$a" ] || die "$n (expected '$e', got '$a')"
+  printf 'PASS %s\n' "$n"
+}
 
 parse_up_json() {
   python3 - "$1" <<'PY'
@@ -98,7 +103,7 @@ PY
 }
 
 last_copy() {
-  [ -f "$LAST_COPY_FILE" ] || die "no disposable copy; run build/up/pre first"
+  [ -f "$LAST_COPY_FILE" ] || die "no disposable copy; run build (or all) first"
   COPY="$(cat "$LAST_COPY_FILE")"
   case "$COPY" in
     "$SMOKE_ROOT"/proj-*) ;;
@@ -317,6 +322,92 @@ check('# --- starship prompt ---' in post, 'post-create.sh must load the Starshi
 check((repo / '.devcontainer' / 'aliases.sh').is_file(), 'aliases.sh missing')
 check((repo / '.devcontainer' / 'starship.toml').is_file(), 'starship.toml missing')
 
+# --- timezone contract ---
+container_tz = container_env.get('TZ')
+tz_template = '${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}'
+check(container_tz == tz_template or (
+    container_tz is not None and re.fullmatch(
+        r'[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*', str(container_tz)) is not None),
+    'containerEnv.TZ must be the DEVCONTAINER_TZ template or an IANA zone name')
+check('TZ' not in dc.get('remoteEnv', {}),
+      'remoteEnv must not set TZ; use containerEnv.TZ or the image default')
+
+arg_tz = re.search(r'^ARG TZ=(\S+)\s*$', dockerfile, re.M)
+check(arg_tz is not None, 'Dockerfile must define ARG TZ')
+if arg_tz:
+    check(arg_tz.group(1) == 'America/Los_Angeles',
+          f'Dockerfile ARG TZ must default to America/Los_Angeles (got {arg_tz.group(1)})')
+check(re.search(r'^ENV\s+TZ=\$\{?TZ\}?\s*$', dockerfile, re.M) is not None,
+      'Dockerfile must export TZ from the TZ ARG')
+if apt_block:
+    check(re.search(r'(?m)^\s*tzdata\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
+          'Dockerfile apt package block must install tzdata')
+check(re.search(r'zone="/usr/share/zoneinfo/\$\{?TZ\}?"', dockerfile) is not None,
+      'Dockerfile must assign the zone path to $zone')
+check(re.search(r'test\s+-f\s+"?\$\{?zone\}?"?', dockerfile) is not None,
+      'Dockerfile must require a regular zone file for TZ')
+check(re.search(r'ln\s+-s[nf]{2}\s+"?\$\{?zone\}?"?\s+/etc/localtime',
+                dockerfile) is not None,
+      'Dockerfile must link /etc/localtime to the configured zone')
+check('Invalid TZ' in dockerfile, 'Dockerfile must reject invalid TZ values')
+check(re.search(r'head\s+-c\s+4\s+"\$resolved"', dockerfile) is not None,
+      'Dockerfile must check the TZif magic header')
+check('/usr/share/zoneinfo/*)' in dockerfile,
+      'Dockerfile must require the resolved zone inside /usr/share/zoneinfo')
+check(re.search(r'printf[^\n]*\$TZ[^\n]*>\s*/etc/timezone', dockerfile) is not None,
+      'Dockerfile must write /etc/timezone')
+
+check('# --- timezone ---' in post, 'post-create.sh missing timezone block')
+check('Invalid TZ' in post, 'post-create.sh must reject invalid zones')
+check('[ ! -f "$zone" ]' in post,
+      'post-create.sh must require a regular zone file, not test -e')
+check('sudo -n ln -sfn "$zone" /etc/localtime' in post,
+      'post-create.sh must apply the zone with sudo -n')
+check(re.search(r'head\s+-c\s+4\s+"\$resolved"', post) is not None,
+      'post-create.sh must check the TZif magic header')
+check('/usr/share/zoneinfo/*)' in post,
+      'post-create.sh must require the resolved zone inside /usr/share/zoneinfo')
+check(re.search(r'printf[^\n]*\$TZ[^\n]*tee\s+/etc/timezone', post) is not None,
+      'post-create.sh must write /etc/timezone')
+
+# --- timezone hardening ---
+check('wc -l' in dockerfile,
+      'Dockerfile must reject multiline TZ values with wc -l')
+check('readlink -f' in dockerfile,
+      'Dockerfile must resolve zone targets with readlink -f')
+check('TZif' in dockerfile,
+      'Dockerfile must require the TZif magic header')
+check('localtime|leapseconds|posixrules' in dockerfile,
+      'Dockerfile must deny non-zone entries (localtime|leapseconds|posixrules)')
+
+check('[ -d /etc/localtime ]' in post,
+      'post-create.sh must refuse to replace a directory /etc/localtime')
+check('readlink -f -- "$zone"' in post or 'resolved=' in post,
+      'post-create.sh must resolve the zone target with readlink -f -- or resolved=')
+check('TZif' in post,
+      'post-create.sh must require the TZif magic header')
+check('localtime|leapseconds|posixrules' in post,
+      'post-create.sh must deny non-zone entries (localtime|leapseconds|posixrules)')
+
+tz_marker = post.find('# --- timezone ---')
+for_dir = post.find('for dir in')
+check(tz_marker != -1 and for_dir != -1 and tz_marker < for_dir,
+      'timezone validation must run before directory creation')
+zone_guard = post.find('if [ ! -f "$zone" ]')
+check(zone_guard != -1 and for_dir != -1 and zone_guard < for_dir,
+      'post-create.sh zone file guard must run before directory creation')
+apply_zone = post.find('sudo -n ln -sfn "$zone"')
+check(apply_zone != -1 and for_dir != -1 and apply_zone < for_dir,
+      'post-create.sh must apply the zone before directory creation')
+
+arg_tz_pos = dockerfile.find('ARG TZ=')
+env_tz_pos = dockerfile.find('ENV TZ=')
+tzif_pos = dockerfile.find('TZif')
+check(arg_tz_pos != -1 and env_tz_pos != -1 and arg_tz_pos < env_tz_pos,
+      'Dockerfile ARG TZ= must precede ENV TZ=')
+check(env_tz_pos != -1 and tzif_pos != -1 and env_tz_pos < tzif_pos,
+      'Dockerfile ENV TZ= must precede the TZif check')
+
 for p in (repo / '.devcontainer').glob('*'):
     if p.is_file():
         text = p.read_text(errors='replace')
@@ -418,6 +509,37 @@ else
 fi
 check "locale: en_US.utf8" bash -c "locale -a | grep -qi en_US"
 
+tz_arg="$(arg TZ)"
+container_tz="$(yq -r '.containerEnv.TZ // ""' /workspace/.devcontainer/devcontainer.json)"
+tz_template='${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}'
+check "dockerfile: TZ" test -n "$tz_arg"
+if [ "$container_tz" = "$tz_template" ]; then
+  check "env: TZ" test -n "${TZ:-}"
+elif [ -n "$container_tz" ]; then
+  check_eq "env: TZ" "$container_tz" "${TZ:-}"
+else
+  check_eq "env: TZ" "$tz_arg" "${TZ:-}"
+fi
+check "timezone: zoneinfo present" test -f "/usr/share/zoneinfo/$tz_arg"
+check "timezone: localtime matches image default" \
+  cmp -s /etc/localtime "/usr/share/zoneinfo/$tz_arg"
+check_eq "timezone: /etc/timezone" "$tz_arg" "$(cat /etc/timezone 2>/dev/null || true)"
+
+tz_summer_ref="$(TZ="$tz_arg" date -d '2026-07-01 12:00:00 UTC' +%z)"
+tz_winter_ref="$(TZ="$tz_arg" date -d '2026-01-15 12:00:00 UTC' +%z)"
+check_eq "timezone: summer offset" "$tz_summer_ref" \
+  "$(env -u TZ date -d '2026-07-01 12:00:00 UTC' +%z)"
+check_eq "timezone: winter offset" "$tz_winter_ref" \
+  "$(env -u TZ date -d '2026-01-15 12:00:00 UTC' +%z)"
+check_eq "timezone: summer abbreviation" \
+  "$(TZ="$tz_arg" date -d '2026-07-01 12:00:00 UTC' +%Z)" \
+  "$(env -u TZ date -d '2026-07-01 12:00:00 UTC' +%Z)"
+check_eq "timezone: clean env offset" "$tz_summer_ref" \
+  "$(env -i PATH=/usr/bin:/bin date -d '2026-07-01 12:00:00 UTC' +%z)"
+check_eq "timezone: sudo clean env offset" "$tz_summer_ref" \
+  "$(sudo -n env -u TZ date -d '2026-07-01 12:00:00 UTC' +%z)"
+check_eq "clock: UTC rendering" +0000 "$(date -u +%z)"
+
 if [ "$fail" -ne 0 ]; then echo "PRE-SMOKE FAILED"; exit 1; fi
 echo "PRE-SMOKE PASSED"
 EOS
@@ -459,6 +581,31 @@ check_eq "kubectl version" "$kubectl_expected" \
 check_eq "helm version" "$helm_expected" \
   "$(helm version --template '{{.Version}}')"
 check "minikube absent" bash -c '! command -v minikube'
+
+tz_expected="${TZ:-}"
+check "env: TZ" test -n "$tz_expected"
+if [ -n "$tz_expected" ]; then
+  check "timezone: zoneinfo present" test -f "/usr/share/zoneinfo/$tz_expected"
+  check "timezone: localtime matches TZ" \
+    cmp -s /etc/localtime "/usr/share/zoneinfo/$tz_expected"
+  check_eq "timezone: /etc/timezone" "$tz_expected" \
+    "$(cat /etc/timezone 2>/dev/null || true)"
+
+  tz_summer_ref="$(TZ="$tz_expected" date -d '2026-07-01 12:00:00 UTC' +%z)"
+  tz_winter_ref="$(TZ="$tz_expected" date -d '2026-01-15 12:00:00 UTC' +%z)"
+  check_eq "timezone: summer offset" "$tz_summer_ref" \
+    "$(env -u TZ date -d '2026-07-01 12:00:00 UTC' +%z)"
+  check_eq "timezone: winter offset" "$tz_winter_ref" \
+    "$(env -u TZ date -d '2026-01-15 12:00:00 UTC' +%z)"
+  check_eq "timezone: summer abbreviation" \
+    "$(TZ="$tz_expected" date -d '2026-07-01 12:00:00 UTC' +%Z)" \
+    "$(env -u TZ date -d '2026-07-01 12:00:00 UTC' +%Z)"
+  check_eq "timezone: clean env offset" "$tz_summer_ref" \
+    "$(env -i PATH=/usr/bin:/bin date -d '2026-07-01 12:00:00 UTC' +%z)"
+  check_eq "timezone: sudo clean env offset" "$tz_summer_ref" \
+    "$(sudo -n env -u TZ date -d '2026-07-01 12:00:00 UTC' +%z)"
+fi
+check_eq "clock: UTC rendering" +0000 "$(date -u +%z)"
 
 check "run: node" node --version
 check "run: npm" npm --version
@@ -546,10 +693,18 @@ run_paste() {
 }
 
 run_idempotent() {
-  local cid before after
+  local cid before after state epoch_before epoch_after epoch_delta
   cid="$(container_id)"
   say "T5 post-create idempotency"
-  before="$(devcontainer exec --container-id "$cid" -- bash -c 'wc -l < "$HOME/.bashrc"; grep -c "^# --- " "$HOME/.bashrc"')"
+  state='
+  wc -l < "$HOME/.bashrc"
+  grep -c "^# --- " "$HOME/.bashrc" || true
+  readlink -f /etc/localtime
+  stat -c %i /etc/localtime
+  cat /etc/timezone 2>/dev/null || true
+'
+  epoch_before="$(devcontainer exec --container-id "$cid" -- date +%s)"
+  before="$(devcontainer exec --container-id "$cid" -- bash -c "$state")"
   for i in 1 2; do
     if ! devcontainer exec --container-id "$cid" -- bash -c 'cd /workspace && bash .devcontainer/post-create.sh' \
         >"$COPY/post-create-$i.stdout" 2>"$COPY/post-create-$i.stderr"; then
@@ -558,8 +713,12 @@ run_idempotent() {
       die "manual post-create run $i failed"
     fi
   done
-  after="$(devcontainer exec --container-id "$cid" -- bash -c 'wc -l < "$HOME/.bashrc"; grep -c "^# --- " "$HOME/.bashrc"')"
-  [ "$before" = "$after" ] || die ".bashrc changed after repeated post-create ($before -> $after)"
+  after="$(devcontainer exec --container-id "$cid" -- bash -c "$state")"
+  epoch_after="$(devcontainer exec --container-id "$cid" -- date +%s)"
+  [ "$before" = "$after" ] || die ".bashrc or timezone state changed after repeated post-create"
+  epoch_delta=$((epoch_after - epoch_before))
+  [ "$epoch_delta" -ge 0 ] && [ "$epoch_delta" -lt 120 ] \
+    || die "system clock jumped during post-create (${epoch_delta}s)"
   echo 'PASS: post-create is idempotent'
 }
 
@@ -591,6 +750,132 @@ run_fresh() {
   rm -f "$COPY/.dc-smoke-container-id"
   run_up
   run_smoke
+}
+
+run_tz() {
+  last_copy
+  local cid
+  TZ_JSON_BACKUP="$COPY/.devcontainer/devcontainer.json.tz-backup"
+  cp "$COPY/.devcontainer/devcontainer.json" "$TZ_JSON_BACKUP"
+  trap 'cp "$COPY/.devcontainer/devcontainer.json.tz-backup" "$COPY/.devcontainer/devcontainer.json"; rm -f "$COPY/.devcontainer/devcontainer.json.tz-backup"' EXIT
+
+  python3 - "$COPY/.devcontainer/devcontainer.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+with open(p) as f:
+    d = json.load(f)
+d.setdefault('containerEnv', {})['TZ'] = 'Asia/Tokyo'
+with open(p, 'w') as f:
+    json.dump(d, f, indent=2)
+    f.write('\n')
+PY
+
+  say "T8 timezone override"
+  run_up skip
+  cid="$(container_id)"
+  devcontainer exec --container-id "$cid" -- bash -s <<'EOS'
+set -uo pipefail
+fail=0
+pass() { printf 'PASS %s\n' "$*"; }
+bad() { printf 'FAIL %s\n' "$*"; fail=1; }
+check() { local n="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$n"; else bad "$n"; fi; }
+check_eq() { local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then pass "$n"; else bad "$n (expected '$e', got '$a')"; fi; }
+
+check_eq "tz override pre: env" Asia/Tokyo "${TZ:-}"
+tz_arg="$(sed -n 's/^ARG TZ=//p' /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"')"
+check "tz override pre: image localtime is still the image default" \
+  cmp -s /etc/localtime "/usr/share/zoneinfo/$tz_arg"
+if [ "$fail" -ne 0 ]; then echo "TZ PRE-SMOKE FAILED"; exit 1; fi
+echo "TZ PRE-SMOKE PASSED"
+EOS
+
+  say "T8 timezone override with post-create"
+  run_up
+  cid="$(container_id)"
+  devcontainer exec --container-id "$cid" -- bash -s <<'EOS'
+set -uo pipefail
+fail=0
+pass() { printf 'PASS %s\n' "$*"; }
+bad() { printf 'FAIL %s\n' "$*"; fail=1; }
+check() { local n="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$n"; else bad "$n"; fi; }
+check_eq() { local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then pass "$n"; else bad "$n (expected '$e', got '$a')"; fi; }
+
+check_eq "tz override: env" Asia/Tokyo "${TZ:-}"
+check "tz override: zoneinfo" test -f /usr/share/zoneinfo/Asia/Tokyo
+check "tz override: localtime" cmp -s /etc/localtime /usr/share/zoneinfo/Asia/Tokyo
+check_eq "tz override: /etc/timezone" Asia/Tokyo "$(cat /etc/timezone)"
+check_eq "tz override: offset" +0900 \
+  "$(env -u TZ date -d '2026-07-01 12:00:00 UTC' +%z)"
+check_eq "tz override: clean env" +0900 \
+  "$(env -i PATH=/usr/bin:/bin date -d '2026-07-01 12:00:00 UTC' +%z)"
+
+before_localtime="$(readlink -f /etc/localtime)"
+before_timezone="$(cat /etc/timezone 2>/dev/null || true)"
+for bad_tz in 'Not/AZone' 'America/Los Angeles' 'PST' 'America' 'Etc' '' '../etc/passwd' \
+    'localtime' 'leapseconds' 'posixrules' '../../../etc/passwd' \
+    '/usr/share/zoneinfo/America/Los_Angeles' 'America//Los_Angeles' 'America/Los_Angeles/'; do
+  if env TZ="$bad_tz" bash -c 'cd /workspace && bash .devcontainer/post-create.sh' \
+      >"$HOME/.tz-invalid.log" 2>&1; then
+    bad "tz invalid '$bad_tz' accepted"
+  else
+    pass "tz invalid '$bad_tz' rejected"
+  fi
+  check "tz invalid '$bad_tz' message" \
+    grep -q 'Invalid TZ' "$HOME/.tz-invalid.log"
+  check_eq "tz invalid '$bad_tz' did not mutate localtime" \
+    "$before_localtime" "$(readlink -f /etc/localtime)"
+  check_eq "tz invalid '$bad_tz' did not mutate /etc/timezone" \
+    "$before_timezone" "$(cat /etc/timezone 2>/dev/null || true)"
+done
+
+if env TZ=$'America/Los_Angeles\n' bash -c 'cd /workspace && bash .devcontainer/post-create.sh' \
+    >"$HOME/.tz-invalid.log" 2>&1; then
+  bad "tz invalid multiline accepted"
+else
+  pass "tz invalid multiline rejected"
+fi
+check_eq "tz invalid multiline did not mutate localtime" \
+  "$before_localtime" "$(readlink -f /etc/localtime)"
+check_eq "tz invalid multiline did not mutate /etc/timezone" \
+  "$before_timezone" "$(cat /etc/timezone 2>/dev/null || true)"
+
+for good_tz in 'US/Pacific' 'Etc/GMT+5' 'MST7MDT'; do
+  if env TZ="$good_tz" bash -c 'cd /workspace && bash .devcontainer/post-create.sh' \
+      >"$HOME/.tz-valid.log" 2>&1; then
+    pass "tz valid '$good_tz' accepted"
+  else
+    bad "tz valid '$good_tz' rejected"
+  fi
+  check_eq "tz valid '$good_tz' /etc/timezone" "$good_tz" \
+    "$(cat /etc/timezone 2>/dev/null || true)"
+  check "tz valid '$good_tz' localtime" \
+    cmp -s /etc/localtime "/usr/share/zoneinfo/$good_tz"
+  check_eq "tz valid '$good_tz' offset" \
+    "$(TZ="$good_tz" date -d '2026-07-01 12:00:00 UTC' +%z)" \
+    "$(env -u TZ date -d '2026-07-01 12:00:00 UTC' +%z)"
+done
+
+if env TZ=Asia/Tokyo bash -c 'cd /workspace && bash .devcontainer/post-create.sh' \
+    >"$HOME/.tz-valid.log" 2>&1; then
+  pass "tz valid restore accepted"
+else
+  bad "tz valid restore rejected"
+fi
+check_eq "tz valid restore /etc/timezone" Asia/Tokyo \
+  "$(cat /etc/timezone 2>/dev/null || true)"
+check "tz valid restore localtime" cmp -s /etc/localtime /usr/share/zoneinfo/Asia/Tokyo
+
+if [ "$fail" -ne 0 ]; then echo "TZ SMOKE FAILED"; exit 1; fi
+echo "TZ SMOKE PASSED"
+EOS
+
+  check_eq_host "tz override: docker exec env" Asia/Tokyo "$(docker exec "$cid" printenv TZ)"
+  check_eq_host "tz override: docker exec offset" +0900 \
+    "$(docker exec "$cid" env -u TZ date -d '2026-07-01 12:00:00 UTC' +%z)"
+
+  cp "$TZ_JSON_BACKUP" "$COPY/.devcontainer/devcontainer.json"
+  rm -f "$TZ_JSON_BACKUP"
+  trap - EXIT
 }
 
 run_cleanup() {
@@ -630,6 +915,7 @@ case "$MODE" in
   idempotent) last_copy; run_idempotent ;;
   recreate) last_copy; run_recreate ;;
   fresh) last_copy; run_fresh ;;
+  tz) last_copy; run_tz ;;
   cleanup) run_cleanup ;;
   all)
     run_guard_test
@@ -643,6 +929,7 @@ case "$MODE" in
     run_idempotent
     run_recreate
     run_fresh
+    run_tz
     ;;
-  *) die "unknown mode: $MODE (use guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|cleanup|all)" ;;
+  *) die "unknown mode: $MODE (use guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all)" ;;
 esac

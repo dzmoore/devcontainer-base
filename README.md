@@ -27,15 +27,15 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 - **Polyglot by default** — Node.js, Bun, Python with uv, and Go are ready to use.
 - **Cloud-native tooling** — Docker-in-Docker, Compose, Buildx, kubectl, Helm, kind, and kubectx/kubens.
 - **AI-assisted workflow** — OpenCode, GitHub Spec Kit, and persistent tool state.
-- **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, and paste-safe terminal settings.
+- **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, paste-safe terminal settings, and a configurable system timezone that defaults to US/Pacific.
 - **Reproducible** — pinned build-time tools and a Dev Container feature lockfile.
-- **Tested** — a smoke suite covers build, runtime, shell paste, idempotency, and volume lifecycle.
+- **Tested** — a smoke suite covers build, runtime, shell paste, idempotency, volume lifecycle, and timezone overrides.
 
 ## What's included
 
 | Area | Details |
 | --- | --- |
-| **Base** | `debian:bookworm-slim`, non-root `developer` user (UID/GID 1000 by default), passwordless sudo, `en_US.UTF-8` locale, bash |
+| **Base** | `debian:bookworm-slim`, non-root `developer` user (UID/GID 1000 by default), passwordless sudo, `en_US.UTF-8` locale, `TZ=America/Los_Angeles` (US/Pacific, overridable with `DEVCONTAINER_TZ`), `tzdata`, bash |
 | **Languages** | Node.js + npm, Bun, Python 3 + uv, Go |
 | **Containers** | Docker-in-Docker, Docker Compose, Buildx |
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
@@ -147,10 +147,10 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 
 | Path | Purpose |
 | --- | --- |
-| `.devcontainer/Dockerfile` | Debian base, non-root user, locale, and pinned CLI tools |
+| `.devcontainer/Dockerfile` | Debian base, non-root user, locale, timezone default, and pinned CLI tools |
 | `.devcontainer/devcontainer.json` | Features, mounts, environment, and lifecycle hooks |
 | `.devcontainer/devcontainer-lock.json` | Resolved Dev Container Feature versions |
-| `.devcontainer/post-create.sh` | Idempotent setup: env loading, ownership repair, shell hooks, Helm login |
+| `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, env loading, ownership repair, shell hooks, Helm login |
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
@@ -175,7 +175,46 @@ devcontainer up --workspace-folder . --remove-existing-container
 ```
 
 > [!NOTE]
-> The runtime smoke test derives the expected yq, kubectl, and Helm versions from their `ARG`s in `.devcontainer/Dockerfile`, so the assertions stay in step with the pins automatically.
+> The runtime smoke test derives the expected yq, kubectl, and Helm versions from their `ARG`s in `.devcontainer/Dockerfile`, so the assertions stay in step with the pins automatically. It derives the expected timezone from the effective `TZ`. The `pre` mode runs before `post-create.sh` reconciles a `containerEnv` override; its `env: TZ` check compares against a literal `containerEnv.TZ` when one is set, and otherwise checks that `TZ` is non-empty for the `DEVCONTAINER_TZ` template. Its `/etc/localtime`, `/etc/timezone`, and offset checks compare against the image baseline from `ARG TZ`.
+
+### Change the timezone
+
+The image sets the system timezone to `America/Los_Angeles` (US/Pacific) from `ARG TZ` in `.devcontainer/Dockerfile`, and `ENV TZ` exposes it to processes. `US/Pacific` is a compatibility alias for the canonical `America/Los_Angeles` name.
+
+`containerEnv.TZ` is set to `${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}` in `devcontainer.json`: when `DEVCONTAINER_TZ` is unset, US/Pacific applies; when it is set, that zone wins. To change the zone without editing a tracked file, export it on the host and recreate:
+
+```bash
+DEVCONTAINER_TZ=Asia/Tokyo devcontainer up --workspace-folder . --remove-existing-container
+```
+
+Unset `DEVCONTAINER_TZ` to return to US/Pacific. Do not set it to an empty string; unset is the default. If you prefer a literal in the project file, replace the `TZ` template in the existing `containerEnv` object with a zone name, keeping `LANG` and `LC_ALL`:
+
+```jsonc
+"containerEnv": {
+  "LANG": "en_US.UTF-8",
+  "LC_ALL": "en_US.UTF-8",
+  "TZ": "Asia/Tokyo",
+  "STARSHIP_CONFIG": "/workspace/.devcontainer/starship.toml",
+  "EDITOR": "nvim",
+  "VISUAL": "nvim"
+}
+```
+
+Use a real IANA zone file under `/usr/share/zoneinfo`. Non-zone entries such as `localtime`, `leapseconds`, and `posixrules` are rejected, as are directories, empty values, paths with `..`, and multiline values. The validator resolves the target inside `/usr/share/zoneinfo` and requires the `TZif` magic header, so a symlink that escapes the zoneinfo tree also fails. Use `DEVCONTAINER_TZ` or a literal IANA name; do not use the generic host `TZ`. Then recreate the container so `containerEnv` is applied:
+
+```bash
+devcontainer up --workspace-folder . --remove-existing-container
+```
+
+In VS Code, `${localEnv:...}` is resolved from the environment of the process that starts the dev container: launch VS Code from a shell with `DEVCONTAINER_TZ` exported, or use a literal in `devcontainer.json`. A GUI-launched VS Code may not see a shell-only export. Run **Dev Containers: Rebuild Container**; it re-creates the container, and the image build is normally a cache hit. A `containerEnv.TZ` change does not require an image change. For a CLI-only recreate without an image change, use the `devcontainer up --remove-existing-container` command above.
+
+`post-create.sh` reconciles `/etc/localtime` and `/etc/timezone` from the effective `TZ`, so programs and clean-environment consumers agree with `date`. Invalid values — an unknown zone, a directory such as `America` or `Etc`, an empty value, or a path with `..` — fail with `Invalid TZ` instead of silently falling back to UTC.
+
+> [!NOTE]
+> To change the image default itself, edit `ARG TZ` in the Dockerfile and rebuild. `build.args.TZ` is not supported. The `DEVCONTAINER_TZ` template default and `ARG TZ` are part of the static test contract, so update the matching assertion in `test/devcontainer-smoke.sh` in the same change.
+
+> [!IMPORTANT]
+> Containers created before the timezone change have no `ENV TZ` and still have `/etc/timezone` set to `Etc/UTC`. Running `post-create.sh` manually keeps UTC because the fallback reads `/etc/timezone`; recreate the container to pick up the new image.
 
 ### Project-local configuration
 
@@ -208,6 +247,7 @@ A few choices are intentional and worth knowing before changing the setup:
 - The feature's `gnupg2`/`dirmngr` installs and its conditional `jq` install are intentionally gone. Add them explicitly if a project needs GPG verification or jq.
 - `KUBECONFIG` points only at the container-local `/home/developer/.kube/config`. Kubernetes client-go locks every file listed in `KUBECONFIG`; on macOS VirtioFS bind mounts a lock file can be created with mode `000`, which breaks `kind`. The `kubeconfig` volume keeps this directory on the Docker volume filesystem and preserves contexts across rebuilds. `post-create.sh` creates the file, sets it to `0600`, and removes stale lock files. Do not add `/workspace/.kube/config` to the default `KUBECONFIG`; merge a project config manually instead.
 - The `developer` username is part of the test contract. If you change it, update the Dockerfile default, `remoteUser`, mounts, `remoteEnv`, and smoke tests together.
+- The timezone precedence is the image baseline (`ARG TZ` → `ENV TZ`), then `containerEnv.TZ` (the `${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}` template; an unset host variable means US/Pacific), then `post-create.sh`, which reconciles `/etc/localtime` and `/etc/timezone`. `TZ` is deliberately not set in `remoteEnv`, which affects only the Dev Containers tool and its terminal processes, not `docker exec`, daemons, or clean login shells, and it is not exported from `.bashrc`, which would make interactive and non-interactive environments disagree. Programs such as `sudo -i`, `su -`, cron, and dockerd may drop `TZ`, so they rely on `/etc/localtime`; post-create keeps that file and `/etc/timezone` in step with the effective zone.
 
 ## Testing
 
@@ -229,9 +269,11 @@ test/devcontainer-smoke.sh all
 test/devcontainer-smoke.sh cleanup
 ```
 
-`all` runs the guard self-test, static checks, image build, pre- and post-create smoke tests, PTY paste tests, idempotency, container recreation, and fresh-volume tests. It can take several minutes and requires Docker plus the Dev Containers CLI. It leaves the disposable copy and volumes in place for inspection; run `cleanup` when you are done.
+`all` runs the guard self-test, static checks, image build, pre- and post-create smoke tests, PTY paste tests, idempotency, container recreation, fresh-volume tests, and the timezone override and invalid-zone checks. It can take several minutes and requires Docker plus the Dev Containers CLI. It leaves the disposable copy and volumes in place for inspection; run `cleanup` when you are done.
 
 The PTY test covers raw paste, bracketed paste, heredocs, `TERM` fallback, and `stty -ixon` across `xterm-ghostty`, `dumb`, and `xterm-256color`.
+
+Timezone coverage is layered: `static` checks the Dockerfile default, `tzdata`, and the post-create block; `pre` proves the image is correct with `--skip-post-create`; `up`, `smoke`, and `idempotent` prove the reconciled runtime state. The offset assertions use fixed UTC instants in July and January, so they exercise daylight saving rules without depending on the current date.
 
 The tests use Python 3 on the host for JSON parsing and the PTY paste test. They target Linux, macOS, or WSL. Set `SMOKE_ROOT` to move the disposable copy, `REPO` to test another checkout, or `CID` to target an existing container.
 
@@ -248,11 +290,12 @@ The tests use Python 3 on the host for JSON parsing and the PTY paste test. They
 | `smoke-real` | Runs the runtime smoke test against the container in `CID` |
 | `paste` | Runs the PTY paste regression against the last container |
 | `paste-real` | Runs the PTY paste regression against the container in `CID` |
-| `idempotent` | Runs `post-create.sh` twice and checks `.bashrc` stability |
+| `idempotent` | Runs `post-create.sh` twice and checks `.bashrc` and timezone-state stability |
 | `recreate` | Recreates the container and runs the smoke test again |
 | `fresh` | Removes test volumes, recreates the container, and runs the smoke test |
+| `tz` | Applies a `containerEnv.TZ=Asia/Tokyo` override with and without post-create, then rejects invalid zones; requires a prior `build` (or `all`), as the other container modes do |
 | `cleanup` | Removes the test container, volumes, and disposable copy |
-| `all` | Runs every mode from `guard` through `fresh` (not `cleanup`) |
+| `all` | Runs every lifecycle mode from `guard` through `tz` (excludes `smoke-real`, `paste-real`, and `cleanup`) |
 
 ### Test an existing container
 
@@ -263,11 +306,35 @@ CID=<container-id> test/devcontainer-smoke.sh smoke-real
 CID=<container-id> test/devcontainer-smoke.sh paste-real
 ```
 
+> [!NOTE]
+> `smoke-real` requires `TZ` in the container environment. Containers created before the timezone change have no `ENV TZ` and fail the new `env: TZ` check until they are recreated.
+
 ## Troubleshooting
 
 ### Docker is not available inside the container
 
 The Docker-in-Docker feature needs a working Docker daemon on the host and a privileged container. Make sure Docker is running, then restart or rebuild the container. The smoke suite waits up to two minutes for the daemon to start.
+
+### The time is UTC or the wrong timezone
+
+Check the effective environment and system files inside the container:
+
+```bash
+date
+echo "$TZ"
+readlink -f /etc/localtime
+cat /etc/timezone
+```
+
+If `TZ` is unset or the files report `Etc/UTC`, the container is older than the timezone change or was created without the image `ENV TZ`. Containers created before the change have no `ENV TZ` and still report `Etc/UTC`; running `post-create.sh` manually keeps UTC because the fallback reads `/etc/timezone`. Recreate the container instead:
+
+```bash
+devcontainer up --workspace-folder . --remove-existing-container
+```
+
+If you set `DEVCONTAINER_TZ` on the host, recreate the container so the value is applied; `echo "${DEVCONTAINER_TZ:-<unset>}"` shows the host value, and unset means US/Pacific. If you edit `containerEnv.TZ` in `devcontainer.json`, recreate the container after editing it; a restart does not apply `containerEnv`. If `post-create.sh` fails with `Invalid TZ`, fix the value to a real IANA zone file under `/usr/share/zoneinfo` and recreate. The validator resolves the target inside `/usr/share/zoneinfo` and requires the `TZif` magic header; it rejects unknown zones, non-zone entries such as `localtime`, `leapseconds`, and `posixrules`, directories, empty values, paths with `..`, multiline values, and paths that escape the zoneinfo tree.
+
+This is a timezone problem, not a clock problem. The container uses the host/VM clock and cannot set it; `date -u` reflects that clock. If `date -u` itself is wrong, fix the Docker Desktop, WSL2, or colima VM clock instead.
 
 ### `kind` fails with `config.lock: permission denied`
 
@@ -330,6 +397,8 @@ devcontainer build --workspace-folder . --frozen-lockfile
 ### Changing the `developer` user
 
 The username appears in the Dockerfile default, `remoteUser`, the mounts, `remoteEnv.PATH`, and the smoke tests. Update all of them and run `test/devcontainer-smoke.sh static`.
+
+The timezone default is a similar static contract: keep `ARG TZ=America/Los_Angeles` and the `${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}` template default in `devcontainer.json` aligned with the static assertion in `test/devcontainer-smoke.sh`; the `pre` and runtime checks derive their expected zone from `ARG TZ` and `TZ`.
 
 ## Learn more
 
