@@ -5,6 +5,57 @@ GITHUB_ENV_FILE="$HOME/.dc/github/.env"
 BRAVE_ENV_FILE="$HOME/.dc/brave/.env"
 DEV_USER="${SUDO_USER:-$(id -un)}"
 
+# --- timezone ---
+# The image writes TZ from ARG TZ. A project can override it with containerEnv.TZ;
+# reconcile /etc/localtime so clean-environment consumers (sudo -i, su -, cron,
+# dockerd) see the same zone as normal processes.
+if [ -z "${TZ+x}" ]; then
+  TZ="$(cat /etc/timezone 2>/dev/null || true)"
+fi
+if [ -z "$TZ" ]; then
+  echo "Invalid TZ: TZ is empty or unset, and /etc/timezone is empty or absent" >&2
+  exit 1
+fi
+if [[ ! "$TZ" =~ ^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$ ]]; then
+  echo "Invalid TZ '$TZ': expected an IANA zone such as America/Los_Angeles" >&2
+  exit 1
+fi
+case "$TZ" in
+  localtime|leapseconds|posixrules)
+    echo "Invalid TZ '$TZ': not an IANA zone" >&2
+    exit 1
+    ;;
+esac
+zone="/usr/share/zoneinfo/$TZ"
+if [ ! -f "$zone" ]; then
+  echo "Invalid TZ '$TZ': $zone is not a zone file" >&2
+  exit 1
+fi
+resolved="$(readlink -f -- "$zone" 2>/dev/null || true)"
+case "$resolved" in
+  /usr/share/zoneinfo/*) ;;
+  *)
+    echo "Invalid TZ '$TZ': $zone does not resolve inside /usr/share/zoneinfo" >&2
+    exit 1
+    ;;
+esac
+if ! head -c 4 "$resolved" | grep -q '^TZif'; then
+  echo "Invalid TZ '$TZ': $resolved is not a TZif zone file" >&2
+  exit 1
+fi
+export TZ
+current="$(readlink -f /etc/localtime 2>/dev/null || true)"
+if [ -z "$current" ] || [ "$current" != "$resolved" ]; then
+  if [ -d /etc/localtime ]; then
+    echo "Refusing to replace /etc/localtime: it is a directory" >&2
+    exit 1
+  fi
+  sudo -n ln -sfn "$zone" /etc/localtime
+fi
+if [ "$(cat /etc/timezone 2>/dev/null || true)" != "$TZ" ]; then
+  printf '%s\n' "$TZ" | sudo -n tee /etc/timezone >/dev/null
+fi
+
 # Read the GitHub token in a subshell so the rest of the script's child
 # processes do not inherit it. The .bashrc blocks further down load the env
 # files for future interactive shells.

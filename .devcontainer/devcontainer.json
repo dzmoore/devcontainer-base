@@ -33,6 +33,7 @@
   "containerEnv": {
     "LANG": "en_US.UTF-8",
     "LC_ALL": "en_US.UTF-8",
+    "TZ": "${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}",
     "STARSHIP_CONFIG": "/workspace/.devcontainer/starship.toml",
     "EDITOR": "nvim",
     "VISUAL": "nvim"

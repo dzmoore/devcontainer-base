@@ -13,6 +13,7 @@ ARG OPENCODE_VERSION=2.2.6
 ARG NVIM_VERSION=v0.12.6
 ARG STARSHIP_VERSION=v1.27.0
 ARG SPECIFY_VERSION=v1.3.2
+ARG TZ=America/Los_Angeles
 
 # kubectl: https://dl.k8s.io/release/v1.37.2/bin/linux/{amd64,arm64}/kubectl.sha256
 # Helm:   https://get.helm.sh/helm-v4.3.1-linux-{amd64,arm64}.tar.gz.sha256sum
@@ -37,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   ripgrep \
   bash-completion \
   locales \
+  tzdata \
   unzip \
   zip \
   python3 \
@@ -139,6 +141,32 @@ RUN set -eu; \
   kubectl version --client; \
   helm version --template '{{.Version}}'; \
   echo
+
+# Set the system time zone. ARG TZ is the image baseline; a project can override
+# it at runtime with containerEnv.TZ, and post-create reconciles /etc/localtime.
+# Validate before linking so a typo fails the build instead of producing a
+# dangling symlink or linking to a directory.
+ENV TZ=${TZ}
+RUN set -eu; \
+  printf '%s' "$TZ" | grep -Eq '^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$' \
+    || { echo "Invalid TZ '$TZ': expected an IANA zone such as America/Los_Angeles" >&2; exit 1; }; \
+  [ "$(printf '%s' "$TZ" | wc -l)" -eq 0 ] \
+    || { echo "Invalid TZ '$TZ': must be a single line" >&2; exit 1; }; \
+  case "$TZ" in localtime|leapseconds|posixrules) \
+    echo "Invalid TZ '$TZ': not an IANA zone" >&2; exit 1 ;; \
+  esac; \
+  zone="/usr/share/zoneinfo/$TZ"; \
+  test -f "$zone" \
+    || { echo "Invalid TZ '$TZ': $zone is not a zone file" >&2; exit 1; }; \
+  resolved="$(readlink -f -- "$zone")" \
+    || { echo "Invalid TZ '$TZ': cannot resolve $zone" >&2; exit 1; }; \
+  case "$resolved" in /usr/share/zoneinfo/*) ;; \
+    *) echo "Invalid TZ '$TZ': $zone does not resolve inside /usr/share/zoneinfo" >&2; exit 1 ;; \
+  esac; \
+  head -c 4 "$resolved" | grep -q '^TZif' \
+    || { echo "Invalid TZ '$TZ': $resolved is not a TZif zone file" >&2; exit 1; }; \
+  ln -snf "$zone" /etc/localtime; \
+  printf '%s\n' "$TZ" > /etc/timezone
 
 USER $USERNAME
 
