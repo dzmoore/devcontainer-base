@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://containers.dev/img/devcontainers-logo.png" alt="Dev Containers" width="96" />
+<img src="assets/icon.svg" alt="devcontainer-base icon" width="96" />
 
 # devcontainer-base
 
@@ -153,6 +153,7 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, env loading, ownership repair, shell hooks, Helm login |
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
+| `opencode.jsonc` | OpenCode project config; enables the Superpowers plugin for containers built from this repo |
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
 | `test/paste-smoke.py` | PTY paste regression test |
 
@@ -218,10 +219,10 @@ In VS Code, `${localEnv:...}` is resolved from the environment of the process th
 
 ### Project-local configuration
 
-The config points a few tools at workspace files and keeps the writable Kubernetes config inside the container:
+The config keeps the writable Kubernetes config inside the container and leaves OpenCode's project settings in the workspace:
 
 - `KUBECONFIG=/home/developer/.kube/config` — the container-local file lives in the `kubeconfig` volume and is where kind and kubectl write new contexts. It is intentionally the only default path: client-go locks every file in `KUBECONFIG`, and a workspace path on macOS VirtioFS can break `kind`. To use a project kubeconfig at `.kube/config`, merge or copy it manually; see [kind fails with `config.lock: permission denied`](#kind-fails-with-configlock-permission-denied).
-- `OPENCODE_CONFIG=/workspace/opencode.jsonc` — add a project-specific OpenCode config at `opencode.jsonc`.
+- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository uses it to enable the [Superpowers](https://github.com/obra/superpowers) plugin; add project-specific OpenCode settings to the same file.
 - `STARSHIP_CONFIG=/workspace/.devcontainer/starship.toml` — the prompt config shipped with this base.
 
 Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your project uses different paths. The configuration also assumes the workspace is mounted at `/workspace`; if you change `workspaceFolder`, update the `/workspace` paths in `containerEnv`, `remoteEnv`, and the `.bashrc` hook in `post-create.sh`.
