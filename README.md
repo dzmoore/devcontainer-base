@@ -39,19 +39,20 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Languages** | Node.js + npm, Bun, Python 3 + uv, Go |
 | **Containers** | Docker-in-Docker, Docker Compose, Buildx |
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
-| **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), curl, OpenSSH client, unzip, zip, yq |
+| **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), Glow (`glow`), curl, OpenSSH client, unzip, zip, yq |
 | **AI & workflow** | OpenCode 2.2.6, Neovim 0.12.6, Starship 1.27.0, GitHub Spec Kit (`specify`) 1.3.2 |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
 | **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, Kubernetes config, and `/worktrees` |
 
 > [!NOTE]
-> The upstream tools installed in the Dockerfile (`yq`, kubectl, Helm, OpenCode, Neovim, Starship, and Spec Kit) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
+> The upstream tools installed in the Dockerfile (`yq`, Glow, kubectl, Helm, OpenCode, Neovim, Starship, and Spec Kit) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
 
 ### Pinned build-time tools
 
 | Tool | Version |
 | --- | --- |
 | [yq](https://github.com/mikefarah/yq) | `v4.54.3` |
+| [Glow](https://github.com/charmbracelet/glow) | `v3.0.0` |
 | [kubectl](https://kubernetes.io/docs/reference/kubectl/) | `v1.37.2` |
 | [Helm](https://helm.sh) | `v4.3.1` |
 | [OpenCode](https://opencode.ai) | `2.2.6` |
@@ -406,6 +407,7 @@ The timezone default is a similar static contract: keep `ARG TZ=America/Los_Ange
 - [Development Containers specification](https://containers.dev)
 - [Dev Container Features](https://containers.dev/features)
 - [Dev Containers CLI](https://github.com/devcontainers/cli)
+- [Glow](https://github.com/charmbracelet/glow)
 - [OpenCode](https://opencode.ai)
 - [GitHub Spec Kit](https://github.com/github/spec-kit)
 - [Starship](https://starship.rs)
