@@ -16,7 +16,6 @@ ARG GLOW_SHA256_ARM64=810c39f4691feb75e675a5f5f54b9fa091354e7599d9cf9c9fc9b97e47
 ARG OPENCODE_VERSION=2.2.7
 ARG NVIM_VERSION=v0.12.6
 ARG STARSHIP_VERSION=v1.27.0
-ARG SPECIFY_VERSION=v1.3.2
 ARG TZ=America/Los_Angeles
 
 # kubectl: https://dl.k8s.io/release/v1.37.2/bin/linux/{amd64,arm64}/kubectl.sha256
@@ -31,7 +30,6 @@ ARG HELM_SHA256_ARM64=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad169
 # Install core development tools stripped out of the slim image.
 # libatomic1 is required by the official Node.js arm64 binaries; openssh-client
 # is needed for SSH git remotes; ripgrep avoids OpenCode's arm64 fallback path.
-# python3/pipx are used to install the spec-kit CLI at build time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   git \
   curl \
@@ -45,9 +43,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   tzdata \
   unzip \
   zip \
-  python3 \
-  python3-venv \
-  pipx \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
@@ -135,11 +130,6 @@ RUN curl -fsSL https://starship.rs/install.sh -o /tmp/starship-install.sh \
   && sh /tmp/starship-install.sh -y --bin-dir /usr/local/bin --version "${STARSHIP_VERSION}" \
   && rm /tmp/starship-install.sh \
   && starship --version | head -1
-
-# Install the spec-kit CLI at build time so post-create only has to verify it.
-RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
-  pipx install "git+https://github.com/github/spec-kit.git@${SPECIFY_VERSION}" \
-  && specify --help >/dev/null
 
 # Install kubectl and Helm from official release artifacts. Digests are pinned
 # per architecture in the ARGs above; source URLs are recorded with the ARGs.
