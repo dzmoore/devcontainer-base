@@ -178,6 +178,7 @@ fi
 echo "Verifying build-time tools..."
 nvim --version >/dev/null
 starship --version >/dev/null
+glow --version >/dev/null
 specify --help >/dev/null 2>&1
 kubectl version --client >/dev/null
 helm version --template '{{.Version}}' >/dev/null
