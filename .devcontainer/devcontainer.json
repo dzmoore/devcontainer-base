@@ -40,8 +40,7 @@
   },
   "remoteEnv": {
     "PATH": "${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin",
-    "KUBECONFIG": "/home/developer/.kube/config",
-    "OPENCODE_CONFIG": "/workspace/opencode.jsonc"
+    "KUBECONFIG": "/home/developer/.kube/config"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "waitFor": "postCreateCommand",

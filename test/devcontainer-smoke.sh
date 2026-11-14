@@ -236,6 +236,14 @@ check(remote_kubeconfig == '/home/developer/.kube/config',
       'remoteEnv.KUBECONFIG must be the container-local kubeconfig')
 check('/workspace/.kube/config' not in remote_kubeconfig,
       'remoteEnv.KUBECONFIG must not include the VirtioFS workspace path')
+check('OPENCODE_CONFIG' not in dc.get('remoteEnv', {}),
+      'remoteEnv must not set OPENCODE_CONFIG; OpenCode discovers opencode.jsonc')
+opencode_path = repo / 'opencode.jsonc'
+check(opencode_path.is_file(), 'opencode.jsonc missing')
+if opencode_path.is_file():
+    opencode_text = opencode_path.read_text()
+    check('superpowers@git+https://github.com/obra/superpowers.git' in opencode_text,
+          'opencode.jsonc must enable the superpowers plugin')
 
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
