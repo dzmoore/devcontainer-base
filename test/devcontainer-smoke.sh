@@ -260,10 +260,9 @@ check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
       'Dockerfile useradd must set --shell /bin/bash')
 apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*', dockerfile)
 check(apt_block is not None, 'Dockerfile apt package block not found')
-for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip'):
-    check(pkg in dockerfile, f'Dockerfile must install {pkg}')
 if apt_block:
-    for pkg in ('bash-completion', 'python3', 'python3-venv', 'pipx'):
+    for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip',
+                'bash-completion', 'python3', 'python3-venv', 'pipx'):
         check(re.search(rf'(?m)^\s*{re.escape(pkg)}\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
               f'Dockerfile apt package block must install {pkg}')
 check(re.search(r'^ENV LANG=en_US\.UTF-8', dockerfile, re.M) is not None,
