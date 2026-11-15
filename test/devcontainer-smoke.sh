@@ -258,13 +258,13 @@ check(any('source=kubeconfig' in mount and 'target=/home/developer/.kube' in mou
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
       'Dockerfile useradd must set --shell /bin/bash')
-for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip'):
-    check(pkg in dockerfile, f'Dockerfile must install {pkg}')
 apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*', dockerfile)
 check(apt_block is not None, 'Dockerfile apt package block not found')
 if apt_block:
-    check(re.search(r'(?m)^\s*bash-completion\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
-          'Dockerfile apt package block must install bash-completion')
+    for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip',
+                'bash-completion', 'python3', 'python3-venv', 'pipx'):
+        check(re.search(rf'(?m)^\s*{re.escape(pkg)}\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
+              f'Dockerfile apt package block must install {pkg}')
 check(re.search(r'^ENV LANG=en_US\.UTF-8', dockerfile, re.M) is not None,
       'Dockerfile must set ENV LANG=en_US.UTF-8')
 check('chown -R $USERNAME:$USERNAME' in dockerfile,
@@ -272,8 +272,7 @@ check('chown -R $USERNAME:$USERNAME' in dockerfile,
 check('/home/$USERNAME/.local' in dockerfile and '/home/$USERNAME/.config' in dockerfile,
       'Dockerfile must chown the .local and .config parents')
 check('/worktrees' in dockerfile, 'Dockerfile must pre-create /worktrees')
-for arg in ('NVIM_VERSION', 'STARSHIP_VERSION', 'SPECIFY_VERSION',
-            'GLOW_VERSION',
+for arg in ('NVIM_VERSION', 'STARSHIP_VERSION', 'GLOW_VERSION',
             'KUBECTL_VERSION', 'HELM_VERSION',
             'GLOW_SHA256_AMD64', 'GLOW_SHA256_ARM64',
             'KUBECTL_SHA256_AMD64', 'KUBECTL_SHA256_ARM64',
@@ -311,7 +310,9 @@ check('amd64) glow_arch=x86_64' in dockerfile and 'arm64) glow_arch=arm64' in do
 check('Unsupported architecture for Glow' in dockerfile,
       'Dockerfile must reject unsupported architectures for Glow')
 check('glow --version' in dockerfile, 'Dockerfile must print the Glow version')
-check('pipx install' in dockerfile, 'Dockerfile must install specify-cli')
+check('SPECIFY_VERSION' not in dockerfile, 'Dockerfile must not pin SPECIFY_VERSION')
+check('specify' not in dockerfile.lower(), 'Dockerfile must not install Spec Kit')
+check('spec-kit' not in dockerfile.lower(), 'Dockerfile must not mention Spec Kit')
 
 post = post_path.read_text()
 check('vscode' not in post.lower(), 'post-create.sh still references vscode')
@@ -322,7 +323,7 @@ check('# --- github env ---' in post, 'post-create.sh missing github env marker'
 check('# --- brave env ---' in post, 'post-create.sh missing brave env marker')
 check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees' in post,
       'post-create.sh must chown .local, .config, .kube, and /worktrees to the runtime user')
-check('specify --help' in post, 'post-create.sh must verify specify-cli')
+check('specify' not in post.lower(), 'post-create.sh must not verify Spec Kit')
 check('glow --version' in post, 'post-create.sh must verify Glow')
 check('yq --version' in post, 'post-create.sh must verify yq')
 check('# --- helm completion ---' in post, 'post-create.sh missing helm completion marker')
@@ -475,7 +476,7 @@ check_eq "identity: shell" /bin/bash "$(getent passwd developer | cut -d: -f7)"
 check "identity: passwordless sudo" sudo -n true
 check_eq "home" /home/developer "$HOME"
 
-for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
+for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship unzip zip; do
   check "command: $c" command -v "$c"
 done
 
@@ -505,7 +506,7 @@ check "run: glow version" bash -c "glow --version | grep -qF '${glow_expected#v}
 check "run: opencode" opencode --version
 check "run: nvim" nvim --version
 check "run: starship" starship --version
-check "run: specify" specify --help
+check "specify absent" bash -c '! command -v specify'
 check "run: unzip" unzip -v
 check "run: zip" zip -v
 
@@ -593,7 +594,7 @@ check_eq "env: STARSHIP_CONFIG" /workspace/.devcontainer/starship.toml "${STARSH
 check_eq "env: EDITOR" nvim "${EDITOR:-}"
 check_eq "env: KUBECONFIG" /home/developer/.kube/config "${KUBECONFIG:-}"
 
-for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
+for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship unzip zip; do
   check "command: $c" command -v "$c"
 done
 
@@ -654,7 +655,7 @@ check "run: nvim" nvim --version
 check "run: nvim headless" nvim --headless +q
 check "run: starship" starship --version
 check "run: starship prompt" starship prompt
-check "run: specify" specify --help
+check "specify absent" bash -c '! command -v specify'
 check "run: unzip" unzip -v
 check "run: zip" zip -v
 check "archive round-trip" bash -c 'cd /tmp && rm -rf dc-zip-test && mkdir dc-zip-test && echo hello > dc-zip-test/hello.txt && zip -q -r dc-zip-test.zip dc-zip-test && rm -rf dc-zip-test && unzip -q dc-zip-test.zip && test "$(cat dc-zip-test/hello.txt)" = hello && rm -rf dc-zip-test dc-zip-test.zip'

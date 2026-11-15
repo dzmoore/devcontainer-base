@@ -8,14 +8,14 @@
 
 [![Dev Containers](https://img.shields.io/badge/Dev_Containers-spec-2753E3?style=flat-square&logo=visualstudiocode&logoColor=white)](https://containers.dev)
 [![Debian 12](https://img.shields.io/badge/Debian-12-A81D33?style=flat-square&logo=debian&logoColor=white)](https://www.debian.org)
-[![OpenCode](https://img.shields.io/badge/OpenCode-2.2.6-000000?style=flat-square)](https://opencode.ai)
+[![OpenCode](https://img.shields.io/badge/OpenCode-2.3.0-000000?style=flat-square)](https://opencode.ai)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
 
 [Overview](#overview) • [What's included](#whats-included) • [Quick start](#quick-start) • [Use it in your project](#use-it-in-your-project) • [Configuration](#configuration) • [Testing](#testing) • [Troubleshooting](#troubleshooting)
 
 </div>
 
-A reusable [Dev Container](https://containers.dev) definition that turns a fresh checkout into a ready-to-code Linux environment. It combines a slim Debian base with language runtimes, Docker and Kubernetes tooling, an AI coding agent, spec-driven development tooling, and a tuned shell, so every project and every teammate starts from the same setup.
+A reusable [Dev Container](https://containers.dev) definition that turns a fresh checkout into a ready-to-code Linux environment. It combines a slim Debian base with language runtimes, Docker and Kubernetes tooling, an AI coding agent, and a tuned shell, so every project and every teammate starts from the same setup.
 
 > [!NOTE]
 > This repository is a base configuration, not a published container image. Open it directly to work on the environment itself, or copy `.devcontainer/` into a project that needs it.
@@ -26,7 +26,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 
 - **Polyglot by default** — Node.js, Bun, Python with uv, and Go are ready to use.
 - **Cloud-native tooling** — Docker-in-Docker, Compose, Buildx, kubectl, Helm, kind, and kubectx/kubens.
-- **AI-assisted workflow** — OpenCode, GitHub Spec Kit, and persistent tool state.
+- **AI-assisted workflow** — OpenCode and persistent tool state.
 - **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, paste-safe terminal settings, and a configurable system timezone that defaults to US/Pacific.
 - **Reproducible** — pinned build-time tools and a Dev Container feature lockfile.
 - **Tested** — a smoke suite covers build, runtime, shell paste, idempotency, volume lifecycle, and timezone overrides.
@@ -40,12 +40,12 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Containers** | Docker-in-Docker, Docker Compose, Buildx |
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), Glow (`glow`), curl, OpenSSH client, unzip, zip, yq |
-| **AI & workflow** | OpenCode 2.2.6, Neovim 0.12.6, Starship 1.27.0, GitHub Spec Kit (`specify`) 1.3.2 |
+| **AI & workflow** | OpenCode 2.3.0, Neovim 0.12.6, Starship 1.27.0 |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
 | **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, Kubernetes config, and `/worktrees` |
 
 > [!NOTE]
-> The upstream tools installed in the Dockerfile (`yq`, Glow, kubectl, Helm, OpenCode, Neovim, Starship, and Spec Kit) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
+> The upstream tools installed in the Dockerfile (`yq`, Glow, kubectl, Helm, OpenCode, Neovim, and Starship) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
 
 ### Pinned build-time tools
 
@@ -55,10 +55,9 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | [Glow](https://github.com/charmbracelet/glow) | `v3.0.0` |
 | [kubectl](https://kubernetes.io/docs/reference/kubectl/) | `v1.37.2` |
 | [Helm](https://helm.sh) | `v4.3.1` |
-| [OpenCode](https://opencode.ai) | `2.2.6` |
+| [OpenCode](https://opencode.ai) | `2.3.0` |
 | [Neovim](https://neovim.io) | `v0.12.6` |
 | [Starship](https://starship.rs) | `v1.27.0` |
-| [GitHub Spec Kit](https://github.com/github/spec-kit) (`specify`) | `v1.3.2` |
 
 ### Persistent volumes
 
@@ -409,5 +408,4 @@ The timezone default is a similar static contract: keep `ARG TZ=America/Los_Ange
 - [Dev Containers CLI](https://github.com/devcontainers/cli)
 - [Glow](https://github.com/charmbracelet/glow)
 - [OpenCode](https://opencode.ai)
-- [GitHub Spec Kit](https://github.com/github/spec-kit)
 - [Starship](https://starship.rs)
