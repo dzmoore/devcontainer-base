@@ -273,12 +273,16 @@ check('/home/$USERNAME/.local' in dockerfile and '/home/$USERNAME/.config' in do
       'Dockerfile must chown the .local and .config parents')
 check('/worktrees' in dockerfile, 'Dockerfile must pre-create /worktrees')
 for arg in ('NVIM_VERSION', 'STARSHIP_VERSION', 'SPECIFY_VERSION',
+            'GLOW_VERSION',
             'KUBECTL_VERSION', 'HELM_VERSION',
+            'GLOW_SHA256_AMD64', 'GLOW_SHA256_ARM64',
             'KUBECTL_SHA256_AMD64', 'KUBECTL_SHA256_ARM64',
             'HELM_SHA256_AMD64', 'HELM_SHA256_ARM64'):
     check(re.search(rf'^ARG {re.escape(arg)}=\S+', dockerfile, re.M) is not None,
           f'Dockerfile must pin {arg}')
-for arg in ('KUBECTL_SHA256_AMD64', 'KUBECTL_SHA256_ARM64', 'HELM_SHA256_AMD64', 'HELM_SHA256_ARM64'):
+for arg in ('GLOW_SHA256_AMD64', 'GLOW_SHA256_ARM64',
+            'KUBECTL_SHA256_AMD64', 'KUBECTL_SHA256_ARM64',
+            'HELM_SHA256_AMD64', 'HELM_SHA256_ARM64'):
     digest = re.search(rf'^ARG {re.escape(arg)}=(\S+)\s*$', dockerfile, re.M)
     check(digest is not None and re.fullmatch(r'[0-9a-f]{64}', digest.group(1)) is not None,
           f'Dockerfile {arg} must be 64-character lowercase hex')
@@ -290,14 +294,23 @@ helm_url = re.search(
 check(helm_url is not None
       and re.search(r'helm-\$\{HELM_VERSION\}-linux-\$\{arch\}\.tar\.gz', dockerfile) is not None,
       'Dockerfile must download the canonical Helm tarball from get.helm.sh with ${HELM_VERSION} and ${arch}')
-check(dockerfile.count('sha256sum --strict -c -') >= 2,
-      'Dockerfile must verify both downloads with sha256sum --strict -c -')
+check(dockerfile.count('sha256sum --strict -c -') >= 3,
+      'Dockerfile must verify kubectl, Helm, and Glow downloads with sha256sum --strict -c -')
 check("printf '%s  kubectl\\n'" in dockerfile,
       'Dockerfile must synthesize the kubectl checksum line')
 check("printf '%s  %s\\n'" in dockerfile,
       'Dockerfile must synthesize the Helm checksum line')
 check('nvim-linux-${nvim_arch}.tar.gz' in dockerfile, 'Dockerfile must install Neovim')
 check('starship.rs/install.sh' in dockerfile, 'Dockerfile must install Starship')
+check(re.search(r'https://github\.com/charmbracelet/glow/releases/download/\$\{GLOW_VERSION\}/\$glow_asset', dockerfile) is not None,
+      'Dockerfile must download the Glow release tarball with ${GLOW_VERSION}')
+check('glow_${glow_version}_Linux_${glow_arch}.tar.gz' in dockerfile,
+      'Dockerfile must use the canonical Glow asset name')
+check('amd64) glow_arch=x86_64' in dockerfile and 'arm64) glow_arch=arm64' in dockerfile,
+      'Dockerfile must map amd64/arm64 to the Glow release architectures')
+check('Unsupported architecture for Glow' in dockerfile,
+      'Dockerfile must reject unsupported architectures for Glow')
+check('glow --version' in dockerfile, 'Dockerfile must print the Glow version')
 check('pipx install' in dockerfile, 'Dockerfile must install specify-cli')
 
 post = post_path.read_text()
@@ -310,6 +323,7 @@ check('# --- brave env ---' in post, 'post-create.sh missing brave env marker')
 check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees' in post,
       'post-create.sh must chown .local, .config, .kube, and /worktrees to the runtime user')
 check('specify --help' in post, 'post-create.sh must verify specify-cli')
+check('glow --version' in post, 'post-create.sh must verify Glow')
 check('yq --version' in post, 'post-create.sh must verify yq')
 check('# --- helm completion ---' in post, 'post-create.sh missing helm completion marker')
 check('helm completion bash' in post, 'post-create.sh must set up helm completion')
@@ -461,13 +475,15 @@ check_eq "identity: shell" /bin/bash "$(getent passwd developer | cut -d: -f7)"
 check "identity: passwordless sudo" sudo -n true
 check_eq "home" /home/developer "$HOME"
 
-for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
+for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
   check "command: $c" command -v "$c"
 done
 
 arg() { sed -n "s/^ARG $1=//p" /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"'; }
+glow_expected="$(arg GLOW_VERSION)"
 kubectl_expected="$(arg KUBECTL_VERSION)"
 helm_expected="$(arg HELM_VERSION)"
+check "dockerfile: GLOW_VERSION" test -n "$glow_expected"
 check "dockerfile: KUBECTL_VERSION" test -n "$kubectl_expected"
 check "dockerfile: HELM_VERSION" test -n "$helm_expected"
 check_eq "kubectl version" "$kubectl_expected" \
@@ -484,6 +500,8 @@ check "run: go" go version
 check "run: uv" uv --version
 check "run: bun" bun --version
 check "run: yq" yq --version
+check "run: glow" glow --version
+check "run: glow version" bash -c "glow --version | grep -qF '${glow_expected#v}'"
 check "run: opencode" opencode --version
 check "run: nvim" nvim --version
 check "run: starship" starship --version
@@ -575,13 +593,15 @@ check_eq "env: STARSHIP_CONFIG" /workspace/.devcontainer/starship.toml "${STARSH
 check_eq "env: EDITOR" nvim "${EDITOR:-}"
 check_eq "env: KUBECONFIG" /home/developer/.kube/config "${KUBECONFIG:-}"
 
-for c in git curl yq opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
+for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship specify unzip zip; do
   check "command: $c" command -v "$c"
 done
 
 arg() { sed -n "s/^ARG $1=//p" /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"'; }
+glow_expected="$(arg GLOW_VERSION)"
 kubectl_expected="$(arg KUBECTL_VERSION)"
 helm_expected="$(arg HELM_VERSION)"
+check "dockerfile: GLOW_VERSION" test -n "$glow_expected"
 check "dockerfile: KUBECTL_VERSION" test -n "$kubectl_expected"
 check "dockerfile: HELM_VERSION" test -n "$helm_expected"
 check_eq "kubectl version" "$kubectl_expected" \
@@ -640,6 +660,8 @@ check "run: zip" zip -v
 check "archive round-trip" bash -c 'cd /tmp && rm -rf dc-zip-test && mkdir dc-zip-test && echo hello > dc-zip-test/hello.txt && zip -q -r dc-zip-test.zip dc-zip-test && rm -rf dc-zip-test && unzip -q dc-zip-test.zip && test "$(cat dc-zip-test/hello.txt)" = hello && rm -rf dc-zip-test dc-zip-test.zip'
 yq_expected="$(sed -n 's/^ARG YQ_VERSION=//p' /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"')"
 check "run: yq version" bash -c "yq --version | grep -qF '$yq_expected'"
+check "run: glow" glow --version
+check "run: glow version" bash -c "glow --version | grep -qF '${glow_expected#v}'"
 check "run: opencode" opencode --version
 
 docker_ok=0

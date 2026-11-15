@@ -9,6 +9,10 @@ ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG YQ_VERSION=v4.54.3
+ARG GLOW_VERSION=v3.0.0
+# Glow: https://github.com/charmbracelet/glow/releases/download/v3.0.0/checksums.txt
+ARG GLOW_SHA256_AMD64=13e05e4b2acc18d2aee44291aefe6325b077ec321b631a0cfa780e8e3bc33f78
+ARG GLOW_SHA256_ARM64=810c39f4691feb75e675a5f5f54b9fa091354e7599d9cf9c9fc9b97e47a99759
 ARG OPENCODE_VERSION=2.2.7
 ARG NVIM_VERSION=v0.12.6
 ARG STARSHIP_VERSION=v1.27.0
@@ -89,6 +93,26 @@ RUN arch="$(dpkg --print-architecture)" \
   -o /usr/local/bin/yq \
   && chmod +x /usr/local/bin/yq \
   && yq --version
+
+# Install Glow (pinned) for rendering Markdown in the terminal. The release
+# asset uses x86_64/arm64 names rather than dpkg's amd64/arm64.
+RUN set -eu; \
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) glow_arch=x86_64; glow_sha256="${GLOW_SHA256_AMD64}" ;; \
+    arm64) glow_arch=arm64; glow_sha256="${GLOW_SHA256_ARM64}" ;; \
+    *) echo "Unsupported architecture for Glow: $arch" >&2; exit 1 ;; \
+  esac; \
+  glow_version="${GLOW_VERSION#v}"; \
+  glow_asset="glow_${glow_version}_Linux_${glow_arch}.tar.gz"; \
+  tmp="$(mktemp -d)"; \
+  trap 'rm -rf "$tmp"' 0; \
+  curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+    -o "$tmp/$glow_asset" "https://github.com/charmbracelet/glow/releases/download/${GLOW_VERSION}/$glow_asset"; \
+  printf '%s  %s\n' "$glow_sha256" "$glow_asset" | (cd "$tmp" && sha256sum --strict -c -); \
+  tar -xzf "$tmp/$glow_asset" -C "$tmp"; \
+  install -m 0755 "$tmp/glow_${glow_version}_Linux_${glow_arch}/glow" /usr/local/bin/glow; \
+  glow --version
 
 # Install Neovim from the official release tarball. The tarball is
 # self-contained apart from libc/libm/libgcc, which bookworm already provides.
