@@ -261,7 +261,7 @@ check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
 apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*', dockerfile)
 check(apt_block is not None, 'Dockerfile apt package block not found')
 if apt_block:
-    for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip',
+    for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'less', 'locales', 'unzip', 'zip',
                 'bash-completion', 'python3', 'python3-venv', 'pipx'):
         check(re.search(rf'(?m)^\s*{re.escape(pkg)}\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
               f'Dockerfile apt package block must install {pkg}')
@@ -476,7 +476,7 @@ check_eq "identity: shell" /bin/bash "$(getent passwd developer | cut -d: -f7)"
 check "identity: passwordless sudo" sudo -n true
 check_eq "home" /home/developer "$HOME"
 
-for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship unzip zip; do
+for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg less nvim starship unzip zip; do
   check "command: $c" command -v "$c"
 done
 
@@ -493,6 +493,7 @@ check_eq "helm version" "$helm_expected" \
   "$(helm version --template '{{.Version}}')"
 check "minikube absent" bash -c '! command -v minikube'
 check "package: bash-completion" dpkg -s bash-completion
+check "package: less" dpkg -s less
 
 check "run: node" node --version
 check "run: npm" npm --version
@@ -503,6 +504,7 @@ check "run: bun" bun --version
 check "run: yq" yq --version
 check "run: glow" glow --version
 check "run: glow version" bash -c "glow --version | grep -qF '${glow_expected#v}'"
+check "run: glow pager" bash -c 'printf "# pager\n" >/tmp/glow-pager.md && env -u PAGER glow /tmp/glow-pager.md --pager </dev/null >/dev/null && rm -f /tmp/glow-pager.md'
 check "run: opencode" opencode --version
 check "run: nvim" nvim --version
 check "run: starship" starship --version
@@ -594,7 +596,7 @@ check_eq "env: STARSHIP_CONFIG" /workspace/.devcontainer/starship.toml "${STARSH
 check_eq "env: EDITOR" nvim "${EDITOR:-}"
 check_eq "env: KUBECONFIG" /home/developer/.kube/config "${KUBECONFIG:-}"
 
-for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg nvim starship unzip zip; do
+for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg less nvim starship unzip zip; do
   check "command: $c" command -v "$c"
 done
 
@@ -651,6 +653,7 @@ check "kubeconfig: client-go lock" bash -c 'kubectl config set-context smoke-tes
 check "run: gh" gh --version
 check "run: ssh" ssh -V
 check "run: rg" rg --version
+check "run: less" less --version
 check "run: nvim" nvim --version
 check "run: nvim headless" nvim --headless +q
 check "run: starship" starship --version
@@ -663,6 +666,7 @@ yq_expected="$(sed -n 's/^ARG YQ_VERSION=//p' /workspace/.devcontainer/Dockerfil
 check "run: yq version" bash -c "yq --version | grep -qF '$yq_expected'"
 check "run: glow" glow --version
 check "run: glow version" bash -c "glow --version | grep -qF '${glow_expected#v}'"
+check "run: glow pager" bash -c 'printf "# pager\n" >/tmp/glow-pager.md && env -u PAGER glow /tmp/glow-pager.md --pager </dev/null >/dev/null && rm -f /tmp/glow-pager.md'
 check "run: opencode" opencode --version
 
 docker_ok=0
