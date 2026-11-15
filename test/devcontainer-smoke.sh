@@ -258,7 +258,8 @@ check(any('source=kubeconfig' in mount and 'target=/home/developer/.kube' in mou
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
       'Dockerfile useradd must set --shell /bin/bash')
-for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip'):
+for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'locales', 'unzip', 'zip',
+            'python3', 'python3-venv', 'pipx'):
     check(pkg in dockerfile, f'Dockerfile must install {pkg}')
 apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*', dockerfile)
 check(apt_block is not None, 'Dockerfile apt package block not found')
@@ -313,7 +314,6 @@ check('glow --version' in dockerfile, 'Dockerfile must print the Glow version')
 check('SPECIFY_VERSION' not in dockerfile, 'Dockerfile must not pin SPECIFY_VERSION')
 check('specify' not in dockerfile.lower(), 'Dockerfile must not install Spec Kit')
 check('spec-kit' not in dockerfile.lower(), 'Dockerfile must not mention Spec Kit')
-check('pipx' not in dockerfile.lower(), 'Dockerfile must not install pipx for Spec Kit')
 
 post = post_path.read_text()
 check('vscode' not in post.lower(), 'post-create.sh still references vscode')
