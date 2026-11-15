@@ -29,7 +29,8 @@ ARG HELM_SHA256_ARM64=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad169
 
 # Install core development tools stripped out of the slim image.
 # libatomic1 is required by the official Node.js arm64 binaries; openssh-client
-# is needed for SSH git remotes; ripgrep avoids OpenCode's arm64 fallback path.
+# is needed for SSH git remotes; ripgrep avoids OpenCode's arm64 fallback path;
+# less backs Glow's --pager mode.
 # python3/python3-venv/pipx are retained for general Python tooling.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   git \
@@ -39,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   libatomic1 \
   openssh-client \
   ripgrep \
+  less \
   bash-completion \
   locales \
   tzdata \
