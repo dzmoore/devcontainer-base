@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$helper_dir/gh-app-token" exec -- gh "$@"

@@ -450,6 +450,189 @@ class GhAppTokenTest(unittest.TestCase):
         self.assertIn("permission", result.stderr.lower())
         self.assertEqual(self.server.requests, [])
 
+    def test_exec_sets_token_environment(self):
+        code = (
+            "import json, os; print(json.dumps({k: os.environ.get(k) for k in "
+            "['GH_HOST','GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN']}))"
+        )
+        result = self.run_cli("exec", "--", "python3", "-c", code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            "GH_HOST": "github.com",
+            "GH_TOKEN": "ghs_test_token",
+            "GITHUB_TOKEN": "ghs_test_token",
+            "GH_ENTERPRISE_TOKEN": None,
+            "GITHUB_ENTERPRISE_TOKEN": None,
+        })
+
+    def test_exec_propagates_child_status(self):
+        result = self.run_cli("exec", "--", "python3", "-c", "raise SystemExit(7)")
+        self.assertEqual(result.returncode, 7)
+
+    def test_exec_missing_binary_exits_127(self):
+        result = self.run_cli("exec", "--", "definitely-not-a-real-command-xyz")
+        self.assertEqual(result.returncode, 127)
+        self.assertEqual(result.stdout, "")
+
+    def test_git_credential_get_returns_token(self):
+        result = self.run_cli(
+            "git-credential", "get",
+            stdin="protocol=https\nhost=github.com\n\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout,
+            "username=x-access-token\npassword=ghs_test_token\n\n",
+        )
+
+    def test_git_credential_requires_host(self):
+        result = self.run_cli("git-credential", "get", stdin="protocol=https\n\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_git_credential_accepts_url(self):
+        result = self.run_cli(
+            "git-credential", "get",
+            stdin="url=https://github.com/owner/repo\n\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout,
+            "username=x-access-token\npassword=ghs_test_token\n\n",
+        )
+
+    def test_git_credential_rejects_http_url(self):
+        result = self.run_cli(
+            "git-credential", "get",
+            stdin="url=http://github.com/owner/repo\n\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_git_credential_rejects_wrong_host_url(self):
+        result = self.run_cli(
+            "git-credential", "get",
+            stdin="url=https://evil.example/owner/repo\n\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_git_credential_accepts_port_and_case(self):
+        result = self.run_cli(
+            "git-credential", "get",
+            stdin="protocol=https\nhost=GitHub.com:443\n\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout,
+            "username=x-access-token\npassword=ghs_test_token\n\n",
+        )
+
+    def test_git_credential_rejects_wrong_port(self):
+        result = self.run_cli(
+            "git-credential", "get",
+            stdin="protocol=https\nhost=github.com:444\n\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_git_credential_ignores_other_host(self):
+        result = self.run_cli(
+            "git-credential", "get",
+            stdin="protocol=https\nhost=evil.example\n\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_git_credential_rejects_http(self):
+        result = self.run_cli(
+            "git-credential", "get",
+            stdin="protocol=http\nhost=github.com\n\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_exec_sets_gh_host_for_enterprise(self):
+        self.write_env(GITHUB_SERVER_URL="https://ghe.example.com")
+        code = (
+            "import json, os; print(json.dumps({k: os.environ.get(k) for k in "
+            "['GH_HOST','GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN']}))"
+        )
+        result = self.run_cli("exec", "--", "python3", "-c", code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            "GH_HOST": "ghe.example.com",
+            "GH_TOKEN": None,
+            "GITHUB_TOKEN": None,
+            "GH_ENTERPRISE_TOKEN": "ghs_test_token",
+            "GITHUB_ENTERPRISE_TOKEN": "ghs_test_token",
+        })
+
+    def test_exec_uses_standard_tokens_for_ghe_cloud(self):
+        code = (
+            "import json, os; print(json.dumps({k: os.environ.get(k) for k in "
+            "['GH_HOST','GH_TOKEN','GITHUB_TOKEN','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN']}))"
+        )
+        for host in ("octocorp.ghe.com", "github.localhost"):
+            with self.subTest(host=host):
+                self.server.reset()
+                self.write_env(GITHUB_SERVER_URL=f"https://{host}")
+                result = self.run_cli("exec", "--", "python3", "-c", code)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), {
+                    "GH_HOST": host,
+                    "GH_TOKEN": "ghs_test_token",
+                    "GITHUB_TOKEN": "ghs_test_token",
+                    "GH_ENTERPRISE_TOKEN": None,
+                    "GITHUB_ENTERPRISE_TOKEN": None,
+                })
+
+    def test_git_credential_store_and_erase_do_nothing(self):
+        for action in ("store", "erase"):
+            result = self.run_cli(
+                "git-credential", action,
+                stdin="protocol=https\nhost=github.com\n\n",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_gh_app_wrapper_passes_token_to_gh(self):
+        fake_bin = pathlib.Path(self.tmp.name) / "fake-bin"
+        fake_bin.mkdir(exist_ok=True)
+        fake_gh = fake_bin / "gh"
+        fake_gh.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$GH_TOKEN\"\nprintf '%s\\n' \"$*\"\n"
+        )
+        fake_gh.chmod(0o755)
+        link_bin = pathlib.Path(self.tmp.name) / "link-bin"
+        link_bin.mkdir(exist_ok=True)
+        (link_bin / "gh-app").symlink_to(REPO / ".devcontainer" / "bin" / "gh-app")
+        (link_bin / "gh-app-token").symlink_to(REPO / ".devcontainer" / "bin" / "gh-app-token")
+        env = {
+            k: v for k, v in os.environ.items()
+            if not k.startswith("GITHUB_APP_")
+            and k not in ("GITHUB_API_URL", "GITHUB_SERVER_URL", "GITHUB_API_VERSION",
+                          "GH_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN",
+                          "GITHUB_ENTERPRISE_TOKEN", "GITHUB_TOKEN")
+        }
+        env.update({
+            "GITHUB_APP_ENV_FILE": str(self.env_file),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        })
+        result = subprocess.run(
+            [str(link_bin / "gh-app"), "pr", "list"],
+            text=True, capture_output=True, env=env, timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ghs_test_token\npr list\n")
+
 
 if __name__ == "__main__":
     unittest.main()

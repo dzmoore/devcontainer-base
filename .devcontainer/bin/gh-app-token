@@ -252,6 +252,101 @@ def parse_permissions(values: list[str]) -> dict[str, str]:
     return permissions
 
 
+def _url_host_port(url: str) -> tuple[str, int]:
+    parsed = urllib.parse.urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port or 443
+    except ValueError:
+        port = 443
+    return host, port
+
+
+def _is_standard_host(host: str) -> bool:
+    return (
+        host == "github.com"
+        or host == "github.localhost"
+        or host.endswith(".ghe.com")
+    )
+
+
+def _exec_with_token(config: Config, command: list[str]) -> int:
+    token = mint_token(config, [], {})["token"]
+    env = os.environ.copy()
+    host, _ = _url_host_port(config.server_url)
+    env["GH_HOST"] = host
+    if _is_standard_host(host):
+        env["GH_TOKEN"] = token
+        env["GITHUB_TOKEN"] = token
+        env.pop("GH_ENTERPRISE_TOKEN", None)
+        env.pop("GITHUB_ENTERPRISE_TOKEN", None)
+    else:
+        env["GH_ENTERPRISE_TOKEN"] = token
+        env["GITHUB_ENTERPRISE_TOKEN"] = token
+        env.pop("GH_TOKEN", None)
+        env.pop("GITHUB_TOKEN", None)
+    try:
+        os.execvpe(command[0], command, env)
+    except OSError as exc:
+        print(f"gh-app-token: cannot execute {command[0]}: {exc}", file=sys.stderr)
+        return 127
+    return 127
+
+
+def _read_credential_input() -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in sys.stdin:
+        line = line.rstrip("\n")
+        if not line:
+            break
+        if "=" in line:
+            key, value = line.split("=", 1)
+            fields[key] = value
+    return fields
+
+
+def _credential_host_port(fields: dict[str, str]) -> tuple[str, int] | None:
+    try:
+        if "url" in fields:
+            parsed = urllib.parse.urlsplit(fields["url"])
+            if parsed.scheme != "https":
+                return None
+            host = parsed.hostname
+            port = parsed.port
+        else:
+            if fields.get("protocol") != "https" or not fields.get("host"):
+                return None
+            parsed = urllib.parse.urlsplit("//" + fields["host"])
+            host = parsed.hostname
+            port = parsed.port
+            if port is None and "port" in fields:
+                port = int(fields["port"])
+    except ValueError:
+        return None
+    if not host:
+        return None
+    return host.lower(), port or 443
+
+
+def _git_credential(config: Config, action: str) -> int:
+    if action == "get":
+        fields = _read_credential_input()
+        requested = _credential_host_port(fields)
+        if requested is None:
+            return 0
+        allowed = {
+            _url_host_port(config.server_url),
+            _url_host_port(config.api_url),
+        }
+        if requested not in allowed:
+            return 0
+        token = mint_token(config, [], {})["token"]
+        sys.stdout.write(f"username=x-access-token\npassword={token}\n\n")
+        return 0
+    sys.stdin.read()
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gh-app-token",
@@ -284,6 +379,10 @@ def _build_parser() -> argparse.ArgumentParser:
     add_scope_args(subparsers.add_parser("token", help="print an installation access token"))
     add_scope_args(subparsers.add_parser("json", help="print the full API response"))
     add_scope_args(subparsers.add_parser("check", help="mint a token and print a summary"))
+    exec_parser = subparsers.add_parser("exec", help="run a command with an installation token")
+    exec_parser.add_argument("cmd", nargs=argparse.REMAINDER)
+    git_parser = subparsers.add_parser("git-credential", help="Git credential helper")
+    git_parser.add_argument("action", choices=("get", "store", "erase"))
     return parser
 
 
@@ -300,8 +399,18 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(env_file)
         repositories = parse_repositories(getattr(args, "repo", []))
         permissions = parse_permissions(getattr(args, "permission", []))
-        response = mint_token(config, repositories, permissions)
 
+        if command == "exec":
+            cmd = list(getattr(args, "cmd", []))
+            if cmd and cmd[0] == "--":
+                cmd = cmd[1:]
+            if not cmd:
+                raise ConfigError("exec requires a command")
+            return _exec_with_token(config, cmd)
+        if command == "git-credential":
+            return _git_credential(config, args.action)
+
+        response = mint_token(config, repositories, permissions)
         if command == "token":
             print(response["token"])
             return 0
