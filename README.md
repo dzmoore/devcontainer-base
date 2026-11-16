@@ -153,7 +153,10 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, env loading, ownership repair, shell hooks, Helm login |
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
-| `opencode.jsonc` | OpenCode project config; enables the Superpowers plugin for containers built from this repo |
+| `opencode.jsonc` | OpenCode project config; enables the Superpowers plugin and configures the Parallel Search and Brave Search MCP servers |
+| `.opencode/agents/research.md` | Research subagent definition and write/network permissions |
+| `.opencode/skills/run-research/` | Research orchestration skill and report template |
+| `research/` | Local research artifacts (gitignored) |
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
 | `test/paste-smoke.py` | PTY paste regression test |
 
@@ -229,6 +232,34 @@ Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your 
 
 > [!WARNING]
 > Kubeconfig files usually contain credentials. Do not commit `.kube/config` unless it is safe to share.
+
+### Research subagent
+
+The project config also defines a `research` subagent and a `run-research` skill for evidence-backed web research. The subagent uses the Parallel Search and Brave Search MCP servers configured in `opencode.jsonc` as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
+
+Invoke the skill with a research question:
+
+```text
+@run-research find the best socket wrench that is recommended by community users and is affordable, and is available currently on amazon
+```
+
+The skill frames the question, launches several `research` subagents in parallel, runs an independent verification pass over the decision-driving claims, and writes a cited report. All artifacts go in one run folder:
+
+```text
+research/<YYYY-MM-DD>-<slug>/
+├── brief.md
+├── notes-community.md
+├── notes-expert.md
+├── notes-price-availability.md
+├── notes-reliability.md
+├── notes-alternatives.md   # optional fifth angle
+├── verification.md
+└── report.md
+```
+
+`research/` is gitignored; do not commit reports or evidence notes. The `research` subagent can write only under `research/**` and cannot use shell or Code Mode, launch subagents, or ask the user.
+
+`BRAVE_API_KEY` must be set before OpenCode starts. If it is missing or either MCP server fails, the research agents continue with the other provider and record the degraded mode. If both MCPs are unavailable, the run marks the affected claims `unverified` rather than falling back to built-in search. Amazon detail pages and Reddit may block fetching; the report marks those claims `unverified` rather than inventing them.
 
 ### Design notes
 
