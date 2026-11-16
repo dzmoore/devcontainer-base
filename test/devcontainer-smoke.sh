@@ -7,7 +7,7 @@
 # the smoke tests do not write to them. The real repo's container and volumes
 # are never modified by this script.
 #
-# Usage: test/devcontainer-smoke.sh [guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all]
+# Usage: test/devcontainer-smoke.sh [guard|static|app-token|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all]
 # Set CID=<container-id> for smoke-real and paste-real.
 set -euo pipefail
 
@@ -480,6 +480,11 @@ PY
   python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
     "$REPO/.devcontainer/bin/gh-app-token"
   echo 'PASS: GitHub App helper syntax'
+}
+
+run_app_token() {
+  say "T1b GitHub App token tests"
+  python3 "$SCRIPT_DIR/github-app-token-test.py" -v
 }
 
 run_build() {
@@ -981,6 +986,7 @@ run_cleanup() {
 case "$MODE" in
   guard) run_guard_test ;;
   static) run_static ;;
+  app-token) run_app_token ;;
   build) run_static; run_build ;;
   pre) last_copy; run_up skip; run_pre_smoke ;;
   up) last_copy; run_up; run_smoke ;;
@@ -996,6 +1002,7 @@ case "$MODE" in
   all)
     run_guard_test
     run_static
+    run_app_token
     run_build
     run_up skip
     run_pre_smoke
@@ -1007,5 +1014,5 @@ case "$MODE" in
     run_fresh
     run_tz
     ;;
-  *) die "unknown mode: $MODE (use guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all)" ;;
+  *) die "unknown mode: $MODE (use guard|static|app-token|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all)" ;;
 esac
