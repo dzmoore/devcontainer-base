@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import http.client
 import json
 import os
 import re
@@ -79,6 +80,8 @@ def _lookup(key: str, file_values: dict[str, str]) -> str | None:
 
 def _validate_url(name: str, value: str) -> str:
     value = value.rstrip("/")
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+        raise ConfigError(f"{name} contains invalid whitespace or control characters")
     try:
         parsed = urllib.parse.urlparse(value)
         host = parsed.hostname
@@ -112,6 +115,10 @@ def load_config(env_file: Path) -> Config:
         raise ConfigError("GITHUB_APP_CLIENT_ID is required (or GITHUB_APP_ID)")
     if not installation_id:
         raise ConfigError("GITHUB_APP_INSTALLATION_ID is required")
+    if not re.fullmatch(r"[0-9]+", installation_id):
+        raise ConfigError("GITHUB_APP_INSTALLATION_ID must be numeric")
+    if any(ch in "\r\n" or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in api_version):
+        raise ConfigError("GITHUB_API_VERSION contains invalid control characters")
 
     key_path = Path(key_value) if key_value else env_file.parent / "app.pem"
     if not key_path.is_file() or not os.access(key_path, os.R_OK):
@@ -152,6 +159,8 @@ def build_jwt(config: Config, now: int | None = None) -> str:
         )
     except FileNotFoundError:
         raise ConfigError("openssl is required to sign the GitHub App JWT") from None
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"could not sign the GitHub App JWT: {_one_line(exc)}") from None
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
         message = detail[0] if detail else "openssl failed"
@@ -204,18 +213,29 @@ def mint_token(
         raw = exc.read()
         message = _api_message(raw) or exc.reason or "request failed"
         raise ApiError(f"GitHub API error (HTTP {exc.code}): {message}") from None
-    except (urllib.error.URLError, TimeoutError) as exc:
+    except (urllib.error.URLError, TimeoutError, http.client.HTTPException, OSError) as exc:
         reason = getattr(exc, "reason", exc)
-        raise ApiError(f"GitHub API request failed: {reason}") from None
+        raise ApiError(f"GitHub API request failed: {_one_line(reason)}") from None
 
     try:
         payload = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
         raise ApiError("GitHub API returned an unexpected response") from None
+    permissions = payload.get("permissions") if isinstance(payload, dict) else None
     if (
         not isinstance(payload, dict)
         or not isinstance(payload.get("token"), str)
         or not isinstance(payload.get("expires_at"), str)
+        or (
+            permissions is not None
+            and (
+                not isinstance(permissions, dict)
+                or not all(
+                    isinstance(key, str) and isinstance(value, str)
+                    for key, value in permissions.items()
+                )
+            )
+        )
     ):
         raise ApiError("GitHub API returned an unexpected response")
     return payload

@@ -49,9 +49,12 @@ class FakeGitHubHandler(BaseHTTPRequestHandler):
             "body": json.loads(body) if body else None,
         })
         data = fake.raw_payload if fake.raw_payload is not None else json.dumps(fake.payload).encode()
+        length = len(data) + (10 if fake.truncate else 0)
+        if fake.truncate:
+            self.close_connection = True
         self.send_response(fake.status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(length))
         self.end_headers()
         self.wfile.write(data)
 
@@ -63,6 +66,7 @@ class FakeGitHubServer:
     def __init__(self):
         self.status = 201
         self.raw_payload = None
+        self.truncate = False
         self.payload = {
             "token": "ghs_test_token",
             "expires_at": "2026-11-15T13:00:00Z",
@@ -83,6 +87,7 @@ class FakeGitHubServer:
     def reset(self):
         self.status = 201
         self.raw_payload = None
+        self.truncate = False
         self.payload = {
             "token": "ghs_test_token",
             "expires_at": "2026-11-15T13:00:00Z",
@@ -286,6 +291,21 @@ class GhAppTokenTest(unittest.TestCase):
                 self.assertIn("GITHUB_API_URL", result.stderr)
                 self.assertEqual(self.server.requests, [])
 
+    def test_invalid_api_url_whitespace_exits_2(self):
+        self.write_env(GITHUB_API_URL="https://example.com/a b")
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("GITHUB_API_URL", result.stderr)
+        self.assertEqual(self.server.requests, [])
+
+    def test_invalid_api_version_control_char_exits_2(self):
+        result = self.run_cli(env={"GITHUB_API_VERSION": "2026-03-10\nX-Evil: 1"})
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("GITHUB_API_VERSION", result.stderr)
+        self.assertEqual(self.server.requests, [])
+
     def test_invalid_server_url_exits_2(self):
         self.write_env(GITHUB_SERVER_URL="http://example.com")
         result = self.run_cli()
@@ -305,6 +325,17 @@ class GhAppTokenTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
         self.assertIn("GITHUB_APP_CLIENT_ID", result.stderr)
+
+    def test_invalid_installation_id_exits_2(self):
+        for value in ("42 43", "123 # org"):
+            with self.subTest(value=value):
+                self.server.reset()
+                self.write_env(GITHUB_APP_INSTALLATION_ID=value)
+                result = self.run_cli()
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("GITHUB_APP_INSTALLATION_ID", result.stderr)
+                self.assertEqual(self.server.requests, [])
 
     def test_missing_key_exits_2(self):
         self.write_env(GITHUB_APP_PRIVATE_KEY_FILE=str(self.key) + ".missing")
@@ -355,6 +386,13 @@ class GhAppTokenTest(unittest.TestCase):
         self.assertEqual(result.returncode, 3)
         self.assertEqual(result.stdout, "")
         self.assertIn("unexpected response", result.stderr)
+
+    def test_truncated_api_response_exits_3(self):
+        self.server.truncate = True
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("GitHub API request failed", result.stderr)
 
     def test_api_error_exits_3_without_token(self):
         self.server.status = 401
@@ -435,6 +473,13 @@ class GhAppTokenTest(unittest.TestCase):
         result = self.run_cli("check")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("permissions:", result.stdout)
+
+    def test_non_dict_permissions_exits_3(self):
+        self.server.payload["permissions"] = ["contents"]
+        result = self.run_cli("check")
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("unexpected response", result.stderr)
 
     def test_repo_scope_rejects_extra_path(self):
         result = self.run_cli("token", "--repo", "owner/repo/extra")
