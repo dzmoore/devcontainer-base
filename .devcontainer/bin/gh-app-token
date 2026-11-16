@@ -127,6 +127,10 @@ def load_config(env_file: Path) -> Config:
     )
 
 
+def _one_line(value: object) -> str:
+    return " ".join(str(value).split())
+
+
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -288,7 +292,7 @@ def _exec_with_token(config: Config, command: list[str]) -> int:
     try:
         os.execvpe(command[0], command, env)
     except OSError as exc:
-        print(f"gh-app-token: cannot execute {command[0]}: {exc}", file=sys.stderr)
+        print(f"gh-app-token: cannot execute {command[0]}: {_one_line(exc)}", file=sys.stderr)
         return 127
     return 127
 
@@ -429,10 +433,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         parser.error(f"unknown command: {command}")
     except ConfigError as exc:
-        print(f"gh-app-token: {exc}", file=sys.stderr)
+        print(f"gh-app-token: {_one_line(exc)}", file=sys.stderr)
         return 2
     except ApiError as exc:
-        print(f"gh-app-token: {exc}", file=sys.stderr)
+        print(f"gh-app-token: {_one_line(exc)}", file=sys.stderr)
         return 3
     return 0
 

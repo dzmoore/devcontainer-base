@@ -366,6 +366,14 @@ class GhAppTokenTest(unittest.TestCase):
         self.assertIn("Bad credentials", result.stderr)
         self.assertNotIn("ghs_test_token", result.stderr)
 
+    def test_api_error_message_is_one_line(self):
+        self.server.status = 401
+        self.server.payload = {"message": "Bad\ncredentials"}
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(len(result.stderr.strip().splitlines()), 1)
+        self.assertIn("Bad credentials", result.stderr)
+
     def test_json_prints_api_response(self):
         result = self.run_cli("json")
         self.assertEqual(result.returncode, 0, result.stderr)
