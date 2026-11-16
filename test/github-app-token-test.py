@@ -366,6 +366,90 @@ class GhAppTokenTest(unittest.TestCase):
         self.assertIn("Bad credentials", result.stderr)
         self.assertNotIn("ghs_test_token", result.stderr)
 
+    def test_json_prints_api_response(self):
+        result = self.run_cli("json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), self.server.payload)
+
+    def test_repo_scope_uses_bare_names(self):
+        result = self.run_cli(
+            "token", "--repo", "dzmoore/devcontainer-base",
+            "--repo", "other/example",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.server.requests[0]["body"]["repositories"],
+            ["devcontainer-base", "example"],
+        )
+
+    def test_repo_scope_strips_git_suffix(self):
+        result = self.run_cli("token", "--repo", "owner/repo.git")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.server.requests[0]["body"]["repositories"], ["repo"])
+
+    def test_repo_scope_rejects_more_than_500(self):
+        args = ["token"]
+        for i in range(501):
+            args += ["--repo", f"repo{i}"]
+        result = self.run_cli(*args)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.server.requests, [])
+
+    def test_permission_scope(self):
+        result = self.run_cli(
+            "token", "--permission", "contents=write",
+            "--permission", "pull_requests=read",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.server.requests[0]["body"]["permissions"],
+            {"contents": "write", "pull_requests": "read"},
+        )
+
+    def test_check_hides_token(self):
+        result = self.run_cli("check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("OK", result.stdout)
+        self.assertIn("2026-11-15T13:00:00Z", result.stdout)
+        self.assertIn("permissions: contents=write", result.stdout)
+        self.assertNotIn("ghs_test_token", result.stdout)
+        self.assertEqual(result.stderr, "")
+
+    def test_check_sorts_permissions(self):
+        self.server.payload["permissions"] = {"pull_requests": "read", "contents": "write"}
+        result = self.run_cli("check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("permissions: contents=write, pull_requests=read", result.stdout)
+
+    def test_check_omits_empty_permissions(self):
+        self.server.payload["permissions"] = {}
+        result = self.run_cli("check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("permissions:", result.stdout)
+
+    def test_repo_scope_rejects_extra_path(self):
+        result = self.run_cli("token", "--repo", "owner/repo/extra")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("repo", result.stderr.lower())
+        self.assertEqual(self.server.requests, [])
+
+    def test_admin_permission_is_accepted(self):
+        result = self.run_cli("token", "--permission", "repository_projects=admin")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.server.requests[0]["body"]["permissions"],
+            {"repository_projects": "admin"},
+        )
+
+    def test_invalid_permission_exits_2(self):
+        result = self.run_cli("token", "--permission", "contents=execute")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("permission", result.stderr.lower())
+        self.assertEqual(self.server.requests, [])
+
 
 if __name__ == "__main__":
     unittest.main()

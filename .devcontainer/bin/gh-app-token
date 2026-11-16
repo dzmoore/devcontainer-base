@@ -22,6 +22,7 @@ DEFAULT_SERVER_URL = "https://github.com"
 DEFAULT_API_VERSION = "2026-03-10"
 DEFAULT_ENV_FILE = Path.home() / ".dc" / "github" / ".env"
 KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+PERMISSION_RE = re.compile(r"[a-z_]+=(read|write|admin)")
 
 
 class ConfigError(Exception):
@@ -216,6 +217,41 @@ def mint_token(
     return payload
 
 
+def parse_repositories(values: list[str]) -> list[str]:
+    repositories = []
+    for value in values:
+        name = value.strip()
+        if name.endswith(".git"):
+            name = name[:-4]
+        if "/" in name:
+            parts = name.split("/")
+            if len(parts) != 2 or not all(parts):
+                raise ConfigError(
+                    f"invalid repository {value!r}; expected NAME or OWNER/NAME"
+                )
+            name = parts[1]
+        if not name or "/" in name:
+            raise ConfigError(
+                f"invalid repository {value!r}; expected NAME or OWNER/NAME"
+            )
+        repositories.append(name)
+    if len(repositories) > 500:
+        raise ConfigError("at most 500 repositories can be scoped")
+    return repositories
+
+
+def parse_permissions(values: list[str]) -> dict[str, str]:
+    permissions = {}
+    for value in values:
+        if not PERMISSION_RE.fullmatch(value):
+            raise ConfigError(
+                f"invalid permission {value!r}; expected KEY=read, KEY=write, or KEY=admin"
+            )
+        key, level = value.split("=", 1)
+        permissions[key] = level
+    return permissions
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gh-app-token",
@@ -227,8 +263,27 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="credentials env file (default: $GITHUB_APP_ENV_FILE or ~/.dc/github/.env)",
     )
+
+    def add_scope_args(subparser: argparse.ArgumentParser) -> None:
+        subparser.add_argument(
+            "--repo",
+            action="append",
+            default=[],
+            metavar="OWNER/REPO",
+            help="scope the token to a repository (repeatable)",
+        )
+        subparser.add_argument(
+            "--permission",
+            action="append",
+            default=[],
+            metavar="KEY=LEVEL",
+            help="scope the token to a permission (repeatable; read, write, or admin)",
+        )
+
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("token", help="print an installation access token")
+    add_scope_args(subparsers.add_parser("token", help="print an installation access token"))
+    add_scope_args(subparsers.add_parser("json", help="print the full API response"))
+    add_scope_args(subparsers.add_parser("check", help="mint a token and print a summary"))
     return parser
 
 
@@ -243,9 +298,25 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = load_config(env_file)
+        repositories = parse_repositories(getattr(args, "repo", []))
+        permissions = parse_permissions(getattr(args, "permission", []))
+        response = mint_token(config, repositories, permissions)
+
         if command == "token":
-            response = mint_token(config, [], {})
             print(response["token"])
+            return 0
+        if command == "json":
+            print(json.dumps(response, indent=2, sort_keys=True))
+            return 0
+        if command == "check":
+            print(f"OK: GitHub App installation {config.installation_id}")
+            print(f"expires_at: {response['expires_at']}")
+            response_permissions = response.get("permissions") or {}
+            if response_permissions:
+                rendered = ", ".join(
+                    f"{key}={value}" for key, value in sorted(response_permissions.items())
+                )
+                print(f"permissions: {rendered}")
             return 0
         parser.error(f"unknown command: {command}")
     except ConfigError as exc:
