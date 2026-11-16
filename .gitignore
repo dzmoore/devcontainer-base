@@ -1,2 +1,5 @@
 # Local Kubernetes credentials and lock files
 .kube/
+
+# Research artifacts (local, evidence-backed reports)
+research/
