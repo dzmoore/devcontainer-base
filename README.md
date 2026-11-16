@@ -122,7 +122,7 @@ If the project already has a `.devcontainer/`, merge the files instead of overwr
 
 ### Optional: host secrets
 
-Three read-only bind mounts make host-side secrets available inside the container:
+Two read-only bind mounts make host-side secrets available inside the container:
 
 - `~/.devcontainer/github/` provides GitHub credentials. `.env` can hold `GITHUB_TOKEN` for `gh` and the `post-create.sh` Helm `ghcr.io` login, plus the GitHub App variables. `app.pem` holds the App private key.
 - `~/.devcontainer/brave/.env` provides `BRAVE_API_KEY` to tools that read it, such as Brave Search integrations.
