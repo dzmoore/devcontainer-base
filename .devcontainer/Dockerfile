@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   sudo \
   libatomic1 \
   openssh-client \
+  openssl \
   ripgrep \
   less \
   bash-completion \
