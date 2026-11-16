@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""Mint GitHub App installation access tokens for the dev container."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+
+DEFAULT_API_URL = "https://api.github.com"
+DEFAULT_SERVER_URL = "https://github.com"
+DEFAULT_API_VERSION = "2026-03-10"
+DEFAULT_ENV_FILE = Path.home() / ".dc" / "github" / ".env"
+KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+class ConfigError(Exception):
+    """A local configuration or usage problem."""
+
+
+class ApiError(Exception):
+    """A GitHub API or network problem."""
+
+
+@dataclass(frozen=True)
+class Config:
+    client_id: str
+    installation_id: str
+    private_key_file: Path
+    api_url: str
+    server_url: str
+    api_version: str
+
+
+def load_env_file(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise ConfigError(f"{path}: cannot read env file") from None
+
+    values: dict[str, str] = {}
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if "=" not in line:
+            raise ConfigError(f"{path}:{lineno}: invalid line; expected KEY=VALUE")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not KEY_RE.fullmatch(key):
+            raise ConfigError(f"{path}:{lineno}: invalid line; expected KEY=VALUE")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _lookup(key: str, file_values: dict[str, str]) -> str | None:
+    if key in os.environ:
+        return os.environ[key]
+    return file_values.get(key)
+
+
+def _validate_url(name: str, value: str) -> str:
+    value = value.rstrip("/")
+    try:
+        parsed = urllib.parse.urlparse(value)
+        host = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        raise ConfigError(f"{name} has an invalid host or port") from None
+    if not host:
+        raise ConfigError(f"{name} must include a hostname")
+    if parsed.scheme == "https":
+        return value
+    if parsed.scheme == "http" and host.lower() in ("localhost", "127.0.0.1", "::1"):
+        return value
+    raise ConfigError(f"{name} must use https (http is allowed only for loopback)")
+
+
+def load_config(env_file: Path) -> Config:
+    file_values = load_env_file(env_file)
+
+    client_id = _lookup("GITHUB_APP_CLIENT_ID", file_values) or _lookup(
+        "GITHUB_APP_ID", file_values
+    )
+    installation_id = _lookup("GITHUB_APP_INSTALLATION_ID", file_values)
+    key_value = _lookup("GITHUB_APP_PRIVATE_KEY_FILE", file_values)
+    api_url = _lookup("GITHUB_API_URL", file_values) or DEFAULT_API_URL
+    server_url = _lookup("GITHUB_SERVER_URL", file_values) or DEFAULT_SERVER_URL
+    api_version = _lookup("GITHUB_API_VERSION", file_values)
+    if api_version is None:
+        api_version = DEFAULT_API_VERSION
+
+    if not client_id:
+        raise ConfigError("GITHUB_APP_CLIENT_ID is required (or GITHUB_APP_ID)")
+    if not installation_id:
+        raise ConfigError("GITHUB_APP_INSTALLATION_ID is required")
+
+    key_path = Path(key_value) if key_value else env_file.parent / "app.pem"
+    if not key_path.is_file() or not os.access(key_path, os.R_OK):
+        raise ConfigError(f"GITHUB_APP_PRIVATE_KEY_FILE is not a readable file: {key_path}")
+
+    return Config(
+        client_id=client_id,
+        installation_id=installation_id,
+        private_key_file=key_path,
+        api_url=_validate_url("GITHUB_API_URL", api_url),
+        server_url=_validate_url("GITHUB_SERVER_URL", server_url),
+        api_version=api_version,
+    )
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def build_jwt(config: Config, now: int | None = None) -> str:
+    now = int(time.time()) if now is None else now
+    header = {"alg": "RS256", "typ": "JWT"}
+    payload = {"iat": now - 60, "exp": now + 540, "iss": config.client_id}
+    signing_input = ".".join(
+        _b64url(json.dumps(part, separators=(",", ":")).encode())
+        for part in (header, payload)
+    )
+    try:
+        result = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", str(config.private_key_file)],
+            input=signing_input.encode(),
+            capture_output=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        raise ConfigError("openssl is required to sign the GitHub App JWT") from None
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        message = detail[0] if detail else "openssl failed"
+        raise ConfigError(f"could not sign the GitHub App JWT: {message}") from None
+    return signing_input + "." + _b64url(result.stdout)
+
+
+def _api_message(body: bytes) -> str | None:
+    try:
+        data = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if isinstance(data, dict) and isinstance(data.get("message"), str):
+        return data["message"]
+    return None
+
+
+def mint_token(
+    config: Config,
+    repositories: list[str],
+    permissions: dict[str, str],
+) -> dict:
+    body: dict = {}
+    if repositories:
+        body["repositories"] = repositories
+    if permissions:
+        body["permissions"] = permissions
+    data = json.dumps(body).encode()
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {build_jwt(config)}",
+        "Content-Type": "application/json",
+        "Content-Length": str(len(data)),
+        "User-Agent": "gh-app-token",
+    }
+    if config.api_version:
+        headers["X-GitHub-Api-Version"] = config.api_version
+
+    request = urllib.request.Request(
+        f"{config.api_url}/app/installations/{config.installation_id}/access_tokens",
+        data=data,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        message = _api_message(raw) or exc.reason or "request failed"
+        raise ApiError(f"GitHub API error (HTTP {exc.code}): {message}") from None
+    except (urllib.error.URLError, TimeoutError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise ApiError(f"GitHub API request failed: {reason}") from None
+
+    try:
+        payload = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        raise ApiError("GitHub API returned an unexpected response") from None
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("token"), str)
+        or not isinstance(payload.get("expires_at"), str)
+    ):
+        raise ApiError("GitHub API returned an unexpected response")
+    return payload
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="gh-app-token",
+        description="Mint GitHub App installation access tokens.",
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="credentials env file (default: $GITHUB_APP_ENV_FILE or ~/.dc/github/.env)",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser("token", help="print an installation access token")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    command = args.command or "token"
+    env_file = args.env_file or Path(
+        os.environ.get("GITHUB_APP_ENV_FILE") or DEFAULT_ENV_FILE
+    )
+
+    try:
+        config = load_config(env_file)
+        if command == "token":
+            response = mint_token(config, [], {})
+            print(response["token"])
+            return 0
+        parser.error(f"unknown command: {command}")
+    except ConfigError as exc:
+        print(f"gh-app-token: {exc}", file=sys.stderr)
+        return 2
+    except ApiError as exc:
+        print(f"gh-app-token: {exc}", file=sys.stderr)
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
