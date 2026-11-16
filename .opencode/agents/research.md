@@ -12,6 +12,9 @@ permissions:
   - action: shell
     resource: "*"
     effect: deny
+  - action: websearch
+    resource: "*"
+    effect: deny
   - action: execute
     resource: "*"
     effect: deny
@@ -54,21 +57,25 @@ recommendation.
 
 ## Tools
 
-Use both search MCPs when available:
+Parallel Search and Brave Search are your primary and only search path.
+OpenCode's built-in `websearch` is disabled for this agent; do not try to use it.
 
 - **Parallel Search** — `web_search` with `objective` and `search_queries`;
   `web_fetch` with `urls` and `objective`.
 - **Brave Search** — `brave_web_search`, `brave_llm_context`, and
   `brave_news_search`.
 
-Prefer `web_search` to discover sources and `web_fetch` to read the pages
-behind promising results. Use Brave for independent corroboration, fresh news,
-and a second index. If the MCP tool names available to you differ slightly,
-find the equivalent tool on the same server and use it.
+Start every angle with Parallel `web_search` for broad discovery and Brave
+`brave_web_search` for an independent second index. Use `web_fetch` or
+`webfetch` only to read specific pages you already have URLs for; fetching is not
+a replacement for searching. If the MCP tool names available to you differ
+slightly, find the equivalent tool on the same server and use it.
 
 If one MCP is unavailable or fails, continue with the other MCP and state
 plainly in your notes and summary which provider was unavailable. Never claim
-both providers worked when only one did.
+both providers worked when only one did. If both MCPs are unavailable, do not
+invent results: use direct `webfetch` on known URLs where possible and mark the
+rest of the angle `unverified`.
 
 ## Evidence standard
 

@@ -64,7 +64,7 @@ The motivating request: `@run-research` should be able to answer a question such
 
 `.opencode/agents/research.md` defines a `mode: subagent` agent named `research`, pinned to `opencode-go/deepseek-v4.1-flash`. It:
 
-- uses Parallel `web_search` / `web_fetch` and Brave `brave_web_search` / `brave_llm_context` / `brave_news_search`;
+- uses Parallel `web_search` / `web_fetch` and Brave `brave_web_search` / `brave_llm_context` / `brave_news_search` as its primary and only search path; built-in `websearch` is denied;
 - prefers primary sources and records claim, source, date, quote, and confidence;
 - cross-checks key claims against at least two independent sources;
 - writes only to the exact markdown path in its brief;

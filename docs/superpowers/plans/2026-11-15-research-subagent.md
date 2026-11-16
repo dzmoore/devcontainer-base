@@ -17,6 +17,7 @@
 - Brave Search command is exactly `npx -y @brave/brave-search-mcp-server --transport stdio`; environment `BRAVE_API_KEY={env:BRAVE_API_KEY}`.
 - The `research` agent runs in `mode: subagent` with model `opencode-go/deepseek-v4.1-flash`.
 - The `research` agent may write only under `research/**`; shell is denied.
+- The `research` agent uses Parallel Search and Brave Search MCP as its primary and only search path; OpenCode's built-in `websearch` is denied.
 - The `research` agent may not launch subagents or ask the user; it must finish its brief and mark blocked facts `unverified`.
 - Research artifacts are never tracked by git.
 - The skill must be invocable as `@run-research <query>`.
@@ -108,6 +109,9 @@ permissions:
     resource: "research/**"
     effect: allow
   - action: shell
+    resource: "*"
+    effect: deny
+  - action: websearch
     resource: "*"
     effect: deny
   - action: "parallel-search_*"

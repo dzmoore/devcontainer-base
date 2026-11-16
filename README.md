@@ -235,7 +235,7 @@ Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your 
 
 ### Research subagent
 
-The project config also defines a `research` subagent and a `run-research` skill for evidence-backed web research. The subagent uses the Parallel Search and Brave Search MCP servers configured in `opencode.jsonc`.
+The project config also defines a `research` subagent and a `run-research` skill for evidence-backed web research. The subagent uses the Parallel Search and Brave Search MCP servers configured in `opencode.jsonc` as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
 
 Invoke the skill with a research question:
 
@@ -259,7 +259,7 @@ research/<YYYY-MM-DD>-<slug>/
 
 `research/` is gitignored; do not commit reports or evidence notes. The `research` subagent can write only under `research/**` and cannot use shell or Code Mode, launch subagents, or ask the user.
 
-`BRAVE_API_KEY` must be set before OpenCode starts. If it is missing or either MCP server fails, the research agents continue with the other provider and record the degraded mode. Amazon detail pages and Reddit may block fetching; the report marks those claims `unverified` rather than inventing them.
+`BRAVE_API_KEY` must be set before OpenCode starts. If it is missing or either MCP server fails, the research agents continue with the other provider and record the degraded mode. If both MCPs are unavailable, the run marks the affected claims `unverified` rather than falling back to built-in search. Amazon detail pages and Reddit may block fetching; the report marks those claims `unverified` rather than inventing them.
 
 ### Design notes
 

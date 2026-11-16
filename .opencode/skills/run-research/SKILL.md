@@ -162,11 +162,14 @@ Every subagent brief must include all of the following:
   questions it must answer.
 - **Source priorities** — primary sources first; then independent expert or
   testing sources; then community discussion. Name the sites worth trying.
+- **Search tools** — Parallel and Brave MCPs are the primary and only search
+  path. Do not use OpenCode's built-in `websearch`; it is disabled for the
+  research agent. Fetch specific pages only after a search result gives you a URL.
 - **Exact output path** — a repo-relative path under `research/`, such as
   `research/2026-11-15-socket-wrench/notes-community.md`.
 - **Evidence standard** — the claim/source/URL/date/quote/confidence format,
   fact-versus-inference labeling, and conflict reporting from this skill.
-- **Required sentence** — "Use both Parallel and Brave; cross-check key claims with two independent sources."
+- **Required sentence** — "Use both Parallel and Brave MCPs as the primary search path; cross-check key claims with two independent sources."
 - **Boundaries** — write only the exact output path, do not use shell, do not
   launch subagents, do not ask the user, and mark blocked facts `unverified`.
 - **Return format** — a short summary plus the exact path written.
@@ -201,7 +204,9 @@ The verifier's brief uses the same contract, with the 3–6 claims and
 
 - **MCP unavailable:** continue with the other search provider and state plainly
   in the notes and report which provider was unavailable. Never claim both
-  worked when only one did.
+  worked when only one did. If both MCPs are unavailable, use direct `webfetch`
+  on known URLs where possible and mark the rest `unverified`; do not fall back
+  to OpenCode's built-in `websearch`.
 - **Thin or blocked results:** try different queries, site-specific searches,
   archives, and direct fetches of the underlying page. If the fact still cannot
   be confirmed, mark it `unverified` and say what was blocked.
@@ -227,6 +232,8 @@ The verifier's brief uses the same contract, with the 3–6 claims and
   fan-out and hides blind spots.
 - **Subagents writing the final report.** Workers write notes only; the verifier
   writes verification only; the primary agent writes `report.md`.
+- **Using built-in `websearch` instead of the MCPs.** Parallel and Brave are the
+  primary search path; built-in search is disabled for the research agent.
 - **Search snippets treated as sources.** Open the page and quote what it says.
 - **Prices without date, region, or seller.** A price is not a fact without
   those fields.
