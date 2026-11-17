@@ -332,6 +332,7 @@ if copy_agent.is_file():
         ('skill', 'run-research', 'deny'),
         ('parallel-search_web_search', '*', 'deny'),
         ('brave-search-mcp-server_brave_web_search', '*', 'deny'),
+        ('experimental_image_generate', 'opencode-go/deepseek-v4.1-flash', 'deny'),
     ]
     for action, resource, expected in permission_cases:
         actual = effective(action, resource)

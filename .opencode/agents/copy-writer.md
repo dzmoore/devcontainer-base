@@ -108,6 +108,9 @@ permissions:
   - action: execute
     resource: "*"
     effect: deny
+  - action: experimental_image_generate
+    resource: "*"
+    effect: deny
   - action: "opencode_*"
     resource: "*"
     effect: deny
