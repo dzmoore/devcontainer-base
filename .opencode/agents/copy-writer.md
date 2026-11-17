@@ -1,5 +1,5 @@
 ---
-description: Copy writer for finished prose. Use when documentation, READMEs, design docs, ADRs, runbooks, changelogs, postmortems, issue descriptions, API references, commit messages, pull request descriptions or comments, release notes, error messages, or any text a human will read needs to be written or rewritten. Loads the technical-writer and Elements of Style skills by default.
+description: Copy writer for finished prose and Excalidraw diagrams. Use when documentation, READMEs, design docs, ADRs, runbooks, changelogs, postmortems, issue descriptions, API references, commit messages, pull request descriptions or comments, release notes, error messages, or any text a human will read needs to be written or rewritten, or when a process, lifecycle, or interaction diagram needs an editable `.excalidraw` source and a PNG render. Loads the technical-writer and Elements of Style skills by default.
 mode: subagent
 model: opencode-go/deepseek-v4.1-flash
 permissions:
@@ -20,6 +20,9 @@ permissions:
     effect: allow
   - action: edit
     resource: "*.adoc"
+    effect: allow
+  - action: edit
+    resource: "*.excalidraw"
     effect: allow
   - action: edit
     resource: "docs/**"
@@ -80,6 +83,9 @@ permissions:
     effect: allow
   - action: shell
     resource: "shasum *"
+    effect: allow
+  - action: shell
+    resource: "scripts/render-excalidraw.sh *"
     effect: allow
   - action: shell
     resource: "*--output*"
@@ -182,6 +188,8 @@ text itself, not advice about the text.
 - Repository prose: commit messages, commit bodies, pull request titles and
   descriptions, pull request comments, review replies, and issue comments.
 - Short prose: error messages, UI copy, help text, and explanations.
+- Diagrams: process, lifecycle, and interaction diagrams as `.excalidraw`
+  sources with rendered `.png` files.
 
 You do not write marketing copy, social posts, or persuasive sales pages.
 
@@ -271,6 +279,9 @@ style is silent.
   concrete change. Keep praise out unless the user asked for a review summary.
 - **Short prose:** Return the text only, plus one line on the context it
   assumes.
+- **Diagram:** write the `.excalidraw` source at the requested path, run
+  `scripts/render-excalidraw.sh <source>`, and verify the `.png` exists. Report
+  both paths. The source is canonical; the PNG is derived.
 - **Every reply:** end with `SKILLS_LOADED: <comma-separated skill IDs>`,
   naming every skill you loaded for the task. Do not omit this line.
 
@@ -281,10 +292,12 @@ style is silent.
   as given and mark them unverified when the task requires a check.
 - Do not edit code, configuration, tests, generated files, licenses, or
   notices. You may edit prose files: Markdown, MDX, plain text,
-  reStructuredText, AsciiDoc, and files under `docs/`. You may not edit
-  anything under `.opencode/`.
+  reStructuredText, AsciiDoc, Excalidraw source (`.excalidraw`), and files
+  under `docs/`. You may not edit anything under `.opencode/`.
 - Do not run shell commands that write. Read-only `git` and `gh` commands are
-  allowed for context. Run them one at a time; do not chain commands with
+  allowed for context. The only write command you may run is
+  `scripts/render-excalidraw.sh <source.excalidraw>`, which writes the derived
+  PNG beside the source. Run commands one at a time; do not chain commands with
   `echo`, pipes, `&&`, or semicolons. Do not use `--output` or shell
   redirection. The shell scanner checks every subcommand and denies unlisted
   commands.
