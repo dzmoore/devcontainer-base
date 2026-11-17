@@ -270,6 +270,10 @@ if copy_agent.is_file():
     check('mode: subagent' in agent_text, 'copy-writer must be a subagent')
     check('model: opencode-go/deepseek-v4.1-flash' in agent_text,
           'copy-writer must use the approved model')
+    check('This is a hard gate.' in agent_text,
+          'copy-writer must state the skill-loading gate')
+    check('SKILLS_LOADED:' in agent_text,
+          'copy-writer must report loaded skills')
     for skill_id in sorted(expected_skills):
         check(f'resource: "{skill_id}"' in agent_text,
               f'copy-writer must allow skill {skill_id}')
