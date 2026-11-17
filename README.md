@@ -161,11 +161,13 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `opencode.jsonc` | OpenCode project config; enables the Superpowers plugin and configures the Parallel Search and Brave Search MCP servers |
 | `.opencode/agents/research.md` | Research subagent definition and write/network permissions |
 | `.opencode/skills/run-research/` | Research orchestration skill and report template |
-| `.opencode/agents/copy-writer.md` | Copy writer subagent definition, skill routing, and prose-only permissions |
-| `.opencode/skills/technical-writer/` | Vendored technical-writer skills, MIT license, and upstream pin |
+| `.opencode/agents/copy-writer.md` | Copy writer subagent definition, skill routing, and prose and diagram permissions |
+| `.opencode/skills/technical-writer/` | 10 vendored technical-writer skills, MIT license, and upstream pin |
 | `.opencode/skills/elements-of-style/` | Vendored Elements of Style reference and local wrapper |
+| `.opencode/skills/diagramming-processes/` | Local Excalidraw-only diagramming skill, references, and templates |
 | `.opencode/skills/writing-commits-and-pull-requests/` | Local skill for commit messages, pull request text, and review comments |
 | `NOTICE` | Third-party writing material attribution |
+| `scripts/render-excalidraw.sh` | Render `.excalidraw` sources to PNG beside them |
 | `scripts/update-writing-skills.sh` | Refresh or verify the vendored writing skills |
 | `research/` | Local research artifacts (gitignored) |
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
@@ -335,13 +337,14 @@ research/<YYYY-MM-DD>-<slug>/
 
 ### Copy writer subagent
 
-The project config defines a `copy-writer` subagent for finished prose:
-documentation, READMEs, design docs, ADRs, runbooks, changelogs, postmortems,
-issue descriptions, API references, commit messages, pull request
-descriptions and comments, release notes, error messages, and other text a
-human will read. It loads the vendored writing skills by default and applies
-the house rules: conclusion first, every claim traceable, one fact in one
-home, plain English, and no em dashes or AI tells.
+The project config defines a `copy-writer` subagent for finished prose and
+Excalidraw diagrams: documentation, READMEs, design docs, ADRs, runbooks,
+changelogs, postmortems, issue descriptions, API references, commit messages,
+pull request descriptions and comments, release notes, error messages, and
+other text a human will read, plus process, lifecycle, and interaction
+diagrams. It loads the vendored writing skills by default and applies the house
+rules: conclusion first, every claim traceable, one fact in one home, plain
+English, and no em dashes or AI tells.
 
 Ask the primary agent to use it:
 
@@ -353,10 +356,11 @@ Use the copy-writer subagent to rewrite the README introduction for a platform t
 Use the copy-writer subagent to write a commit message for the staged changes.
 ```
 
-The agent writes prose files directly and returns commit messages, pull
-request descriptions, and pull request comments as ready-to-paste text. It
-does not commit, post, push, or open pull requests. It can run read-only `git`
-and `gh` commands for context, but it cannot run write commands, use the web,
+The agent writes prose and `.excalidraw` source files directly and returns
+commit messages, pull request descriptions, and pull request comments as
+ready-to-paste text. It does not commit, post, push, or open pull requests. It
+can run a narrow set of read-only `git` and `gh` commands, plus
+`scripts/render-excalidraw.sh` to render a diagram PNG. It cannot use the web,
 launch subagents, or edit code and configuration.
 
 #### Vendored writing skills
@@ -365,22 +369,42 @@ launch subagents, or edit code and configuration.
 | --- | --- | --- |
 | `technical-writing` | technical-writer | Core house style, truth rules, and banned constructions |
 | `writing-design-docs`, `recording-decisions`, `writing-changelogs`, `writing-runbooks`, `writing-issues`, `writing-postmortems` | technical-writer | Document-type formats |
-| `documenting-contracts`, `documenting-legacy-codebases`, `diagramming-processes` | technical-writer | API, legacy, and diagram documentation |
+| `documenting-contracts`, `documenting-legacy-codebases` | technical-writer | API and legacy documentation |
 | `reviewing-technical-prose` | technical-writer | Final review pass |
 | `writing-clearly-and-concisely` | the-elements-of-style | Strunk's 1918 rules and full reference |
+| `diagramming-processes` | This repository, adapted from technical-writer and awesome-copilot | Excalidraw process and lifecycle diagrams, source plus PNG |
 | `writing-commits-and-pull-requests` | This repository | Commit, pull request, and review-comment formats |
 
 The technical-writer skills are vendored from
 [riekelt/technical-writer](https://github.com/riekelt/technical-writer) at
 commit `85e5372` (v1.8.4, MIT). The Elements of Style reference is vendored
 from [obra/the-elements-of-style](https://github.com/obra/the-elements-of-style)
-at commit `05fc4f0` (1918 text, public domain).
-`writing-commits-and-pull-requests` is local to this repository.
+at commit `05fc4f0` (1918 text, public domain). The `diagramming-processes`
+skill is local and adapted from technical-writer and
+[github/awesome-copilot](https://github.com/github/awesome-copilot)'s
+`excalidraw-diagram-generator` skill (MIT). `writing-commits-and-pull-requests`
+is local to this repository.
 
 At the pinned commit, the Elements of Style repository has no license file.
 The 1918 text is public domain; the wrapper at
 `.opencode/skills/elements-of-style/` is a local adaptation that points at the
 verbatim text. See the `UPSTREAM.md` files for the exact pins and attribution.
+
+#### Diagrams
+
+For process, lifecycle, and interaction diagrams, the skill writes an
+`.excalidraw` source and renders a `.png` beside it with
+`scripts/render-excalidraw.sh`. The `.excalidraw` file is the editable source;
+the PNG is for Markdown. Commit both.
+
+```bash
+scripts/render-excalidraw.sh docs/diagrams/refund-process.excalidraw
+```
+
+The renderer uses `@moona3k/excalidraw-export` 0.2.1, a pure-computation
+renderer with no browser. It downloads the pinned package on first use and
+uses the npm cache after that. The `diagramming-processes` skill is not
+refreshed by `scripts/update-writing-skills.sh`; it is repository-owned.
 
 To refresh the vendored trees, run `scripts/update-writing-skills.sh`; use
 `--check` to verify that the working tree matches the pinned commits. To
