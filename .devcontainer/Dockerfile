@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   libatomic1 \
   openssh-client \
   openssl \
+  firefox-esr \
   ripgrep \
   less \
   bash-completion \
