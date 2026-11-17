@@ -190,7 +190,7 @@ PY
 run_static() {
   say "T1 static contract"
   python3 - "$REPO" <<'PY'
-import json, os, pathlib, re, sys
+import fnmatch, json, os, pathlib, re, sys
 repo = pathlib.Path(sys.argv[1])
 dc_path = repo / '.devcontainer' / 'devcontainer.json'
 lock_path = repo / '.devcontainer' / 'devcontainer-lock.json'
@@ -282,6 +282,62 @@ if copy_agent.is_file():
     for denied in ('.opencode/**', '.git/**', 'node_modules/**'):
         check(f'resource: "{denied}"' in agent_text,
               f'copy-writer must not edit {denied}')
+    mcp_servers = []
+    if opencode_config.is_file():
+        mcp_servers = re.findall(r'"([^"]+)"\s*:\s*\{\s*"type"',
+                                 opencode_config.read_text())
+    for server in mcp_servers:
+        check(f'action: "{server}_*"' in agent_text,
+              f'copy-writer must deny MCP server {server}')
+    check('resource: "*--output*"' in agent_text,
+          'copy-writer must deny shell --output writes')
+    check('resource: "*>*"' in agent_text,
+          'copy-writer must deny shell redirection writes')
+
+    permissions_text = agent_text.split('permissions:', 1)[1].split('\n---', 1)[0]
+    permission_rules = []
+    current = None
+    for line in permissions_text.splitlines():
+        m = re.match(r'\s*- action:\s*(.+?)\s*$', line)
+        if m:
+            current = {'action': m.group(1).strip().strip('"')}
+            permission_rules.append(current)
+            continue
+        m = re.match(r'\s+resource:\s*(.+?)\s*$', line)
+        if m and current is not None:
+            current['resource'] = m.group(1).strip().strip('"')
+            continue
+        m = re.match(r'\s+effect:\s*(.+?)\s*$', line)
+        if m and current is not None:
+            current['effect'] = m.group(1).strip().strip('"')
+
+    def effective(action, resource):
+        result = 'allow'
+        for rule in permission_rules:
+            if (fnmatch.fnmatchcase(action, rule['action'])
+                    and fnmatch.fnmatchcase(resource, rule['resource'])):
+                result = rule['effect']
+        return result
+
+    permission_cases = [
+        ('edit', 'README.md', 'allow'),
+        ('edit', 'docs/guide.md', 'allow'),
+        ('edit', 'src/app.py', 'deny'),
+        ('edit', '.opencode/agents/copy-writer.md', 'deny'),
+        ('shell', 'git diff --staged', 'allow'),
+        ('shell', 'git diff --output=app.py', 'deny'),
+        ('shell', 'git diff > app.py', 'deny'),
+        ('shell', 'git commit -m x', 'deny'),
+        ('skill', 'writing-commits-and-pull-requests', 'allow'),
+        ('skill', 'run-research', 'deny'),
+        ('parallel-search_web_search', '*', 'deny'),
+        ('brave-search-mcp-server_brave_web_search', '*', 'deny'),
+    ]
+    for action, resource, expected in permission_cases:
+        actual = effective(action, resource)
+        check(actual == expected,
+              f'permission matrix: {action} {resource} expected {expected}, got {actual}')
+
 found_skills = {}
 for skill_md in (repo / '.opencode' / 'skills').rglob('SKILL.md'):
     skill_id = skill_md.parent.name
@@ -329,6 +385,16 @@ if update_script.is_file():
     script_text = update_script.read_text()
     for pin in upstream_pins.values():
         check(pin in script_text, f'update script missing pinned commit {pin}')
+    tw_rm_lines = [line.strip() for line in script_text.splitlines()
+                   if 'rm -rf' in line and 'TW_DEST' in line]
+    check(tw_rm_lines == ['rm -rf "$TW_DEST"/*/'],
+          f'update script must remove only vendored skill directories: {tw_rm_lines}')
+    eos_rm_lines = [line.strip() for line in script_text.splitlines()
+                    if 'rm -rf' in line and 'EOS_DEST' in line]
+    check(not eos_rm_lines,
+          f'update script must not remove the EOS tree: {eos_rm_lines}')
+    check('cp "$tmp/elements-of-style/skills/writing-clearly-and-concisely/elements-of-style.md"' in script_text,
+          'update script must copy only the EOS reference text')
 
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)

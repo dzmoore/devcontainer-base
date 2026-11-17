@@ -7,31 +7,31 @@ permissions:
     resource: "*"
     effect: deny
   - action: edit
-    resource: "**/*.md"
+    resource: "*.md"
     effect: allow
   - action: edit
-    resource: "**/*.mdx"
+    resource: "*.mdx"
     effect: allow
   - action: edit
-    resource: "**/*.txt"
+    resource: "*.txt"
     effect: allow
   - action: edit
-    resource: "**/*.rst"
+    resource: "*.rst"
     effect: allow
   - action: edit
-    resource: "**/*.adoc"
+    resource: "*.adoc"
     effect: allow
   - action: edit
     resource: "docs/**"
     effect: allow
   - action: edit
-    resource: "**/README*"
+    resource: "README*"
     effect: allow
   - action: edit
-    resource: "**/CHANGELOG*"
+    resource: "CHANGELOG*"
     effect: allow
   - action: edit
-    resource: "**/CONTRIBUTING*"
+    resource: "CONTRIBUTING*"
     effect: allow
   - action: edit
     resource: ".opencode/**"
@@ -81,10 +81,22 @@ permissions:
   - action: shell
     resource: "shasum *"
     effect: allow
+  - action: shell
+    resource: "*--output*"
+    effect: deny
+  - action: shell
+    resource: "*>*"
+    effect: deny
   - action: webfetch
     resource: "*"
     effect: deny
   - action: websearch
+    resource: "*"
+    effect: deny
+  - action: "parallel-search_*"
+    resource: "*"
+    effect: deny
+  - action: "brave-search-mcp-server_*"
     resource: "*"
     effect: deny
   - action: subagent
@@ -270,8 +282,9 @@ style is silent.
   anything under `.opencode/`.
 - Do not run shell commands that write. Read-only `git` and `gh` commands are
   allowed for context. Run them one at a time; do not chain commands with
-  `echo`, pipes, `&&`, or semicolons. The shell scanner checks every
-  subcommand and denies unlisted commands.
+  `echo`, pipes, `&&`, or semicolons. Do not use `--output` or shell
+  redirection. The shell scanner checks every subcommand and denies unlisted
+  commands.
 - Do not restyle a document that follows its own conventions unless the user
   asks. Match the target's structure, voice, and terminology. When editing an
   existing document, apply the hard rules to new and changed text, and do not
