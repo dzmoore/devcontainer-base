@@ -293,6 +293,10 @@ if copy_agent.is_file():
           'copy-writer must deny shell --output writes')
     check('resource: "*>*"' in agent_text,
           'copy-writer must deny shell redirection writes')
+    check('resource: "*.excalidraw"' in agent_text,
+          'copy-writer must allow Excalidraw source edits')
+    check('resource: "scripts/render-excalidraw.sh *"' in agent_text,
+          'copy-writer must allow the diagram renderer')
 
     permissions_text = agent_text.split('permissions:', 1)[1].split('\n---', 1)[0]
     permission_rules = []
@@ -328,6 +332,8 @@ if copy_agent.is_file():
         ('shell', 'git diff --output=app.py', 'deny'),
         ('shell', 'git diff > app.py', 'deny'),
         ('shell', 'git commit -m x', 'deny'),
+        ('edit', 'docs/diagrams/process.excalidraw', 'allow'),
+        ('shell', 'scripts/render-excalidraw.sh docs/diagrams/process.excalidraw', 'allow'),
         ('skill', 'writing-commits-and-pull-requests', 'allow'),
         ('skill', 'run-research', 'deny'),
         ('parallel-search_web_search', '*', 'deny'),
@@ -353,6 +359,25 @@ for skill_md in (repo / '.opencode' / 'skills').rglob('SKILL.md'):
 for skill_id in sorted(expected_skills):
     check(skill_id in found_skills, f'missing skill: {skill_id}')
 
+diagram_skill = repo / '.opencode' / 'skills' / 'diagramming-processes'
+check(diagram_skill.is_dir(), 'local diagramming-processes skill missing')
+for rel in ('SKILL.md', 'LICENSE', 'UPSTREAM.md',
+            'references/excalidraw-schema.md', 'references/element-types.md',
+            'templates/flowchart.excalidraw', 'templates/sequence.excalidraw',
+            'templates/swimlane.excalidraw'):
+    check((diagram_skill / rel).is_file(),
+          f'diagramming-processes missing {rel}')
+for png in ('flowchart.png', 'sequence.png', 'swimlane.png'):
+    path = diagram_skill / 'templates' / png
+    check(path.is_file() and path.stat().st_size > 1000,
+          f'diagramming-processes missing render {png}')
+if (diagram_skill / 'SKILL.md').is_file():
+    diagram_text = (diagram_skill / 'SKILL.md').read_text()
+    for marker in ('Excalidraw is the only diagram tool', 'fontFamily: 5',
+                   'scripts/render-excalidraw.sh', '.excalidraw', '.png'):
+        check(marker in diagram_text,
+              f'diagramming-processes missing {marker}')
+
 check((repo / '.opencode' / 'skills' / 'technical-writer' / 'LICENSE').is_file(),
       'technical-writer LICENSE missing')
 upstream_pins = {
@@ -370,14 +395,22 @@ eos_ref = (repo / '.opencode' / 'skills' / 'elements-of-style' /
            'writing-clearly-and-concisely' / 'elements-of-style.md')
 check(eos_ref.is_file() and eos_ref.stat().st_size > 50000,
       'Elements of Style reference is missing or truncated')
-check((repo / 'NOTICE').is_file(), 'NOTICE missing')
+notice_path = repo / 'NOTICE'
+check(notice_path.is_file(), 'NOTICE missing')
+if notice_path.is_file():
+    notice_text = notice_path.read_text()
+    check('awesome-copilot' in notice_text,
+          'NOTICE missing awesome-copilot attribution')
+    check('@moona3k/excalidraw-export' in notice_text,
+          'NOTICE missing renderer attribution')
 
 readme_path = repo / 'README.md'
 check(readme_path.is_file(), 'README.md missing')
 if readme_path.is_file():
     readme_text = readme_path.read_text()
     for marker in ('### Copy writer subagent', 'riekelt/technical-writer',
-                   'obra/the-elements-of-style'):
+                   'obra/the-elements-of-style', '#### Diagrams',
+                   'render-excalidraw.sh', 'diagramming-processes'):
         check(marker in readme_text, f'README.md missing {marker}')
 
 update_script = repo / 'scripts' / 'update-writing-skills.sh'
@@ -386,9 +419,14 @@ if update_script.is_file():
     script_text = update_script.read_text()
     for pin in upstream_pins.values():
         check(pin in script_text, f'update script missing pinned commit {pin}')
+    check('TW_EXCLUDE="diagramming-processes"' in script_text,
+          'update script must exclude the local diagramming skill')
+    check('--exclude "$TW_EXCLUDE"' in script_text,
+          'update script --check must exclude the local diagramming skill')
     tw_rm_lines = [line.strip() for line in script_text.splitlines()
                    if 'rm -rf' in line and 'TW_DEST' in line]
-    check(tw_rm_lines == ['rm -rf "$TW_DEST"/*/'],
+    check(tw_rm_lines == ['rm -rf "$TW_DEST"/*/',
+                          'rm -rf "$TW_DEST/$TW_EXCLUDE"'],
           f'update script must remove only vendored skill directories: {tw_rm_lines}')
     eos_rm_lines = [line.strip() for line in script_text.splitlines()
                     if 'rm -rf' in line and 'EOS_DEST' in line]
@@ -396,6 +434,15 @@ if update_script.is_file():
           f'update script must not remove the EOS tree: {eos_rm_lines}')
     check('cp "$tmp/elements-of-style/skills/writing-clearly-and-concisely/elements-of-style.md"' in script_text,
           'update script must copy only the EOS reference text')
+
+renderer = repo / 'scripts' / 'render-excalidraw.sh'
+check(renderer.is_file(), 'Excalidraw renderer missing')
+if renderer.is_file():
+    renderer_text = renderer.read_text()
+    check('0.2.1' in renderer_text, 'Excalidraw renderer must pin 0.2.1')
+    check('@moona3k/excalidraw-export' in renderer_text,
+          'Excalidraw renderer must use the pinned package')
+    check('--scale' in renderer_text, 'Excalidraw renderer must set a scale')
 
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
@@ -632,6 +679,8 @@ PY
   python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
     "$REPO/.devcontainer/bin/gh-app-token"
   echo 'PASS: GitHub App helper syntax'
+  bash -n "$REPO/scripts/render-excalidraw.sh"
+  echo 'PASS: Excalidraw renderer syntax'
 }
 
 run_app_token() {
