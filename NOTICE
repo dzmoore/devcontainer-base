@@ -22,7 +22,12 @@ Excalidraw diagram guidance
   Adapted into .opencode/skills/diagramming-processes.
   Vendored at commit a06ba06d11f41b996f8c246e2a452e1bf3a17950.
 
-@moona3k/excalidraw-export 0.2.1
-  Source: https://www.npmjs.com/package/@moona3k/excalidraw-export
+@excalidraw/cli 0.3.0
+  Source: https://github.com/excalidraw/cli
   License: MIT
   Used by scripts/render-excalidraw.sh; not vendored.
+
+Mozilla Firefox ESR
+  Source: Debian package firefox-esr
+  License: MPL-2.0
+  Installed in the image for headless Excalidraw rendering.

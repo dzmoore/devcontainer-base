@@ -41,6 +41,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), Glow (`glow`) with `less` pager, curl, OpenSSH client, unzip, zip, yq |
 | **AI & workflow** | OpenCode 2.3.0, Neovim 0.12.6, Starship 1.27.0 |
+| **Rendering** | Firefox ESR (headless) for the official Excalidraw CLI and PNG diagram rendering |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
 | **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, Kubernetes config, and `/worktrees` |
 
@@ -401,10 +402,12 @@ the PNG is for Markdown. Commit both.
 scripts/render-excalidraw.sh docs/diagrams/refund-process.excalidraw
 ```
 
-The renderer uses `@moona3k/excalidraw-export` 0.2.1, a pure-computation
-renderer with no browser. It downloads the pinned package on first use and
-uses the npm cache after that. The `diagramming-processes` skill is not
-refreshed by `scripts/update-writing-skills.sh`; it is repository-owned.
+The renderer uses the official `@excalidraw/cli` 0.3.0 through the headless
+Firefox ESR installed in the devcontainer. It downloads the pinned CLI on first
+use and uses the npm cache after that. Firefox ESR adds about 272 MB plus its
+GTK and Mesa dependencies to the image; the CLI does not download a browser.
+The `diagramming-processes` skill is not refreshed by
+`scripts/update-writing-skills.sh`; it is repository-owned.
 
 To refresh the vendored trees, run `scripts/update-writing-skills.sh`; use
 `--check` to verify that the working tree matches the pinned commits. To
@@ -417,6 +420,7 @@ network access and are not part of the smoke suite.
 A few choices are intentional and worth knowing before changing the setup:
 
 - The non-root user uses `/bin/bash` because some Dev Container Features run `su <user> -c` snippets that rely on bash builtins.
+- Firefox ESR is installed only for headless Excalidraw rendering. It is not a user-facing browser; it adds about 272 MB plus GTK and Mesa dependencies, and the official CLI drives it through Playwright's Firefox channel.
 - `libatomic1` is required by the official Node.js arm64 binaries, and `ripgrep` avoids OpenCode's arm64 fallback path.
 - `less` is installed from Debian because Glow's `--pager` mode defaults to `less -r`, and `debian:bookworm-slim` does not include a pager.
 - Mount targets are created and chowned in the image so fresh named volumes are writable by `developer`; `post-create.sh` repairs existing volumes.

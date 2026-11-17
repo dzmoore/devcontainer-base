@@ -12,8 +12,9 @@ This skill is repository-owned. It is not refreshed from upstream.
   [github/awesome-copilot](https://github.com/github/awesome-copilot),
   `skills/excalidraw-diagram-generator`, commit
   `a06ba06d11f41b996f8c246e2a452e1bf3a17950` (MIT, Copyright GitHub, Inc.).
-- Renderer: [`@moona3k/excalidraw-export`](https://www.npmjs.com/package/@moona3k/excalidraw-export)
-  0.2.1 (MIT), invoked by `scripts/render-excalidraw.sh`. It is not vendored.
+- Renderer: [`@excalidraw/cli`](https://github.com/excalidraw/cli) 0.3.0
+  (MIT), invoked by `scripts/render-excalidraw.sh`. It is not vendored. It
+  renders through the Firefox ESR browser installed by the devcontainer.
 
 Vendored: 2026-11-16.
 

@@ -4,13 +4,15 @@
 # Usage:
 #   scripts/render-excalidraw.sh <source.excalidraw> [...]
 #
-# The .excalidraw file is the source; the .png is derived. The script uses a
-# pinned pure-computation renderer, so it needs no browser. The first run
-# downloads the package; later runs use the npm cache.
+# The .excalidraw file is the source; the .png is derived. The script uses the
+# official Excalidraw CLI through the headless Firefox ESR installed in the
+# devcontainer. The first run downloads the pinned CLI; later runs use the npm
+# cache.
 set -euo pipefail
 
-RENDERER_VERSION="0.2.1"
+RENDERER_VERSION="0.3.0"
 SCALE="2"
+BROWSER_PATH="${EXCALIDRAW_BROWSER_PATH:-/usr/bin/firefox-esr}"
 
 usage() {
   printf 'Usage: %s <source.excalidraw> [...]\n' "$0" >&2
@@ -37,8 +39,11 @@ for input in "$@"; do
   }
 
   output="${input%.excalidraw}.png"
-  npx --yes "@moona3k/excalidraw-export@$RENDERER_VERSION" \
-    "$input" -o "$output" --scale "$SCALE"
+  args=(render "$input" --out "$output" --scale "$SCALE")
+  if [ -x "$BROWSER_PATH" ]; then
+    args+=(--browser-path "$BROWSER_PATH")
+  fi
+  npx --yes "@excalidraw/cli@$RENDERER_VERSION" "${args[@]}"
   [ -s "$output" ] || {
     printf 'error: render produced no PNG: %s\n' "$output" >&2
     exit 1

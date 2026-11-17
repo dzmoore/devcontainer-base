@@ -37,10 +37,10 @@ below forbids.
   a `diagrams/` directory beside the documents that embed them. In this
   repository, use `docs/diagrams/` when no local convention exists.
 - Run `scripts/render-excalidraw.sh <source.excalidraw> [...]` after every
-  source edit. The script writes `<source>.png` at 2x scale. It uses
-  `@moona3k/excalidraw-export` 0.2.1, a pure-computation renderer with no
-  browser. The first run downloads the pinned package; later runs use the npm
-  cache.
+  source edit. The script writes `<source>.png` at 2x scale. It uses the
+  official `@excalidraw/cli` 0.3.0 through the headless Firefox ESR installed
+  in the devcontainer. The first run downloads the pinned CLI; later runs use
+  the npm cache.
 - When a source changes, its PNG is regenerated in the same change. If the
   render cannot run, delete the stale PNG and record the pending render in the
   diagram index; never leave a stale image to mislead.
@@ -198,10 +198,10 @@ box, which is a failure.
 scripts/render-excalidraw.sh docs/diagrams/refund-process.excalidraw
 ```
 
-The script writes `docs/diagrams/refund-process.png` at 2x scale. It uses
-`@moona3k/excalidraw-export` 0.2.1, a pure-computation renderer with no browser.
-The first run downloads the package; later runs use the npm cache. Run
-`bash -n scripts/render-excalidraw.sh` after editing the script.
+The script writes `docs/diagrams/refund-process.png` at 2x scale. It uses the
+official `@excalidraw/cli` 0.3.0 through the headless Firefox ESR installed in
+the devcontainer. The first run downloads the CLI; later runs use the npm
+cache. Run `bash -n scripts/render-excalidraw.sh` after editing the script.
 
 ## Embedding
 
