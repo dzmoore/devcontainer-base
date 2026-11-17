@@ -7,8 +7,13 @@
 - License: MIT. See `LICENSE`.
 - Upstream path: `plugins/technical-writer/skills/`
 
-These files are copied verbatim from the upstream repository. Do not edit them
-here. Refresh them with `scripts/update-writing-skills.sh` and review the diff.
+The vendored skills are copied verbatim from the upstream repository. Do not
+edit them here. Refresh them with `scripts/update-writing-skills.sh` and review
+the diff.
+
+The upstream `diagramming-processes` skill is intentionally not vendored. The
+repository-owned `.opencode/skills/diagramming-processes/` skill replaces it
+with an Excalidraw-only workflow.
 
 The upstream plugin's `agents/`, `commands/`, and `evals/` directories are
 intentionally not vendored. The copy writer uses the skills directly.
