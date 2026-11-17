@@ -1,0 +1,16 @@
+This repository includes third-party writing material:
+
+technical-writer
+  Source: https://github.com/riekelt/technical-writer
+  Copyright (c) 2026 riekelt
+  License: MIT
+  Vendored at commit 85e53729dd959a2795d593d6769068e342cf3486.
+  See .opencode/skills/technical-writer/LICENSE.
+
+The Elements of Style (1918)
+  Author: William Strunk Jr.
+  Source: https://github.com/obra/the-elements-of-style
+  Text source: Project Gutenberg #37134
+  License: Public domain
+  Vendored at commit 05fc4f0d2b97b7c042dd9949ad658568e4a1324e.
+  See .opencode/skills/elements-of-style/UPSTREAM.md.
