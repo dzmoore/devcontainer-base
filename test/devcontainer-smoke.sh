@@ -274,6 +274,8 @@ if copy_agent.is_file():
           'copy-writer must state the skill-loading gate')
     check('SKILLS_LOADED:' in agent_text,
           'copy-writer must report loaded skills')
+    check('  - action: edit\n    resource: "*"\n    effect: deny' in agent_text,
+          'copy-writer must deny edits outside prose files')
     for skill_id in sorted(expected_skills):
         check(f'resource: "{skill_id}"' in agent_text,
               f'copy-writer must allow skill {skill_id}')
