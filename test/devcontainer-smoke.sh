@@ -401,8 +401,10 @@ if notice_path.is_file():
     notice_text = notice_path.read_text()
     check('awesome-copilot' in notice_text,
           'NOTICE missing awesome-copilot attribution')
-    check('@moona3k/excalidraw-export' in notice_text,
+    check('@excalidraw/cli' in notice_text,
           'NOTICE missing renderer attribution')
+    check('Firefox' in notice_text,
+          'NOTICE missing Firefox attribution')
 
 readme_path = repo / 'README.md'
 check(readme_path.is_file(), 'README.md missing')
@@ -439,10 +441,13 @@ renderer = repo / 'scripts' / 'render-excalidraw.sh'
 check(renderer.is_file(), 'Excalidraw renderer missing')
 if renderer.is_file():
     renderer_text = renderer.read_text()
-    check('0.2.1' in renderer_text, 'Excalidraw renderer must pin 0.2.1')
-    check('@moona3k/excalidraw-export' in renderer_text,
-          'Excalidraw renderer must use the pinned package')
+    check('0.3.0' in renderer_text, 'Excalidraw renderer must pin 0.3.0')
+    check('@excalidraw/cli' in renderer_text,
+          'Excalidraw renderer must use the official CLI')
     check('--scale' in renderer_text, 'Excalidraw renderer must set a scale')
+    check('--out' in renderer_text, 'Excalidraw renderer must set an output path')
+    check('--browser-path' in renderer_text,
+          'Excalidraw renderer must pass the browser path')
 
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
@@ -460,8 +465,8 @@ check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
 apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*', dockerfile)
 check(apt_block is not None, 'Dockerfile apt package block not found')
 if apt_block:
-    for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'less', 'locales', 'unzip', 'zip',
-                'bash-completion', 'python3', 'python3-venv', 'pipx'):
+    for pkg in ('libatomic1', 'openssh-client', 'openssl', 'firefox-esr', 'ripgrep', 'less',
+                'locales', 'unzip', 'zip', 'bash-completion', 'python3', 'python3-venv', 'pipx'):
         check(re.search(rf'(?m)^\s*{re.escape(pkg)}\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
               f'Dockerfile apt package block must install {pkg}')
 check(re.search(r'^ENV LANG=en_US\.UTF-8', dockerfile, re.M) is not None,
