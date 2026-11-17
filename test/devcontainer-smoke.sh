@@ -245,6 +245,85 @@ if opencode_path.is_file():
     check('superpowers@git+https://github.com/obra/superpowers.git' in opencode_text,
           'opencode.jsonc must enable the superpowers plugin')
 
+# Copy writer agent and vendored writing skills
+opencode_config = repo / 'opencode.jsonc'
+if opencode_config.is_file():
+    config_text = opencode_config.read_text()
+    check('elements-of-style@git' not in config_text,
+          'opencode.jsonc must not load the Elements of Style plugin at runtime')
+    check('technical-writer@git' not in config_text,
+          'opencode.jsonc must not load a technical-writer plugin at runtime')
+
+expected_skills = {
+    'technical-writing', 'writing-design-docs', 'recording-decisions',
+    'writing-changelogs', 'writing-runbooks', 'writing-issues',
+    'writing-postmortems', 'documenting-legacy-codebases',
+    'diagramming-processes', 'documenting-contracts',
+    'reviewing-technical-prose', 'writing-clearly-and-concisely',
+    'writing-commits-and-pull-requests',
+}
+
+copy_agent = repo / '.opencode' / 'agents' / 'copy-writer.md'
+check(copy_agent.is_file(), 'copy-writer agent missing')
+if copy_agent.is_file():
+    agent_text = copy_agent.read_text()
+    check('mode: subagent' in agent_text, 'copy-writer must be a subagent')
+    check('model: opencode-go/deepseek-v4.1-flash' in agent_text,
+          'copy-writer must use the approved model')
+    for skill_id in sorted(expected_skills):
+        check(f'resource: "{skill_id}"' in agent_text,
+              f'copy-writer must allow skill {skill_id}')
+    for denied in ('.opencode/**', '.git/**', 'node_modules/**'):
+        check(f'resource: "{denied}"' in agent_text,
+              f'copy-writer must not edit {denied}')
+found_skills = {}
+for skill_md in (repo / '.opencode' / 'skills').rglob('SKILL.md'):
+    skill_id = skill_md.parent.name
+    check(skill_id not in found_skills,
+          f'duplicate skill id: {skill_id}')
+    found_skills[skill_id] = skill_md
+    text = skill_md.read_text()
+    check(text.startswith('---\n'), f'{skill_md}: missing frontmatter')
+    check('\nname:' in text, f'{skill_md}: missing frontmatter name')
+    check('\ndescription:' in text, f'{skill_md}: missing frontmatter description')
+
+for skill_id in sorted(expected_skills):
+    check(skill_id in found_skills, f'missing skill: {skill_id}')
+
+check((repo / '.opencode' / 'skills' / 'technical-writer' / 'LICENSE').is_file(),
+      'technical-writer LICENSE missing')
+upstream_pins = {
+    repo / '.opencode' / 'skills' / 'technical-writer' / 'UPSTREAM.md':
+        '85e53729dd959a2795d593d6769068e342cf3486',
+    repo / '.opencode' / 'skills' / 'elements-of-style' / 'UPSTREAM.md':
+        '05fc4f0d2b97b7c042dd9949ad658568e4a1324e',
+}
+for upstream, pin in upstream_pins.items():
+    check(upstream.is_file(), f'{upstream}: missing')
+    if upstream.is_file():
+        check(pin in upstream.read_text(), f'{upstream}: missing pinned commit')
+
+eos_ref = (repo / '.opencode' / 'skills' / 'elements-of-style' /
+           'writing-clearly-and-concisely' / 'elements-of-style.md')
+check(eos_ref.is_file() and eos_ref.stat().st_size > 50000,
+      'Elements of Style reference is missing or truncated')
+check((repo / 'NOTICE').is_file(), 'NOTICE missing')
+
+readme_path = repo / 'README.md'
+check(readme_path.is_file(), 'README.md missing')
+if readme_path.is_file():
+    readme_text = readme_path.read_text()
+    for marker in ('### Copy writer subagent', 'riekelt/technical-writer',
+                   'obra/the-elements-of-style'):
+        check(marker in readme_text, f'README.md missing {marker}')
+
+update_script = repo / 'scripts' / 'update-writing-skills.sh'
+check(update_script.is_file(), 'writing skills update script missing')
+if update_script.is_file():
+    script_text = update_script.read_text()
+    for pin in upstream_pins.values():
+        check(pin in script_text, f'update script missing pinned commit {pin}')
+
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
     target = m.get('target') or m.get('dst') or ''
