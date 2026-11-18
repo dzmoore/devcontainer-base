@@ -14,7 +14,8 @@ orchestrator.
 
 ## Inputs
 
-Ask the orchestrator for anything missing before you start. You need:
+If an input is missing, state the gap in your report and return; or proceed
+on the narrowest defensible assumption and record it. You need:
 
 - the task brief or acceptance criteria;
 - the diff or the commit range;

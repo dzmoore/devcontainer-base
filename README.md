@@ -126,7 +126,7 @@ If the project already has a `.devcontainer/` or `.opencode/`, merge the files i
 Two read-only bind mounts make host-side secrets available inside the container:
 
 - `~/.devcontainer/github/` provides GitHub credentials. `.env` can hold `GITHUB_TOKEN` for `gh` and the `post-create.sh` Helm `ghcr.io` login, plus the GitHub App variables. `app.pem` holds the App private key.
-- `~/.devcontainer/brave/.env` provides `BRAVE_API_KEY` to tools that read it, such as Brave Search integrations.
+- `~/.devcontainer/brave/.env` provides `BRAVE_API_KEY` for shell tools that read it. The Brave MCP server does not read this file; it reads `~/.devcontainer/opencode/secrets/brave_api_key` through `{file:/etc/opencode/secrets/brave_api_key}`.
 
 Create the files on the host before the first launch:
 
@@ -168,7 +168,7 @@ repo list
 - `repo worktree <name> <branch>` creates `/workspace/repos/.worktrees/<owner>/<repo>/<name>`.
 - `repo list` prints each clone, its branch, and whether it is dirty.
 
-`repo` uses the GitHub App helper when the `GITHUB_APP_*` variables are present in the environment or `~/.dc/github/.env`: it runs `gh-app-token check`, then uses `gh-app` for `gh` commands and the `gh-app-token git-credential` helper for network `clone`/`fetch`. If the App is configured but the check fails, the command prints the error and stops instead of silently downgrading. Without App variables it sources `~/.dc/github/.env` when `GITHUB_TOKEN` is unset, exports `GH_TOKEN`, and uses plain `gh`/`git`. Tokens are never written into a remote URL.
+`repo` uses the GitHub App helper when the `GITHUB_APP_*` variables are present in the environment or `~/.dc/github/.env`: it runs `gh-app-token check`, then uses `gh-app` for `gh` commands, including `gh repo clone` and `gh pr checkout`, and the `gh-app-token git-credential` helper for network `fetch`. If the App is configured but the check fails, the command prints the error and stops instead of silently downgrading. Without App variables it sources `~/.dc/github/.env` when `GITHUB_TOKEN` is unset, exports `GH_TOKEN`, and uses plain `gh`/`git`. Tokens are never written into a remote URL.
 
 #### Migrating from the old `worktrees` volume
 
@@ -198,15 +198,23 @@ If `/worktrees` is still an old volume mountpoint or a non-empty directory, `pos
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
 | `opencode.jsonc` | OpenCode project config; minimal and defines no MCP servers |
+| `.opencode/opencode.global.json` | Global control-plane config: default `orchestrator`, local Superpowers plugin, `AGENTS.md` instruction, worktree directory, and disabled `build` and `plan` |
+| `.opencode/AGENTS.md` | Control-plane instructions: OpenCode V2 tool mapping, TDD policy, worker rules, host overlay, and repository paths |
+| `.opencode/agents/` | Nine agent definitions: one primary `orchestrator` and eight subagents |
 | `.opencode/agents/research.md` | Research subagent definition and write/network permissions |
-| `.opencode/skills/run-research/` | Research orchestration skill and report template |
 | `.opencode/agents/copy-writer.md` | Copy writer subagent definition, skill routing, and prose and diagram permissions |
+| `.opencode/skills/` | Role skills, `run-research`, and the vendored writing skills |
+| `.opencode/skills/run-research/` | Research orchestration skill and report template |
+| `.opencode/superpowers/` | Vendored Superpowers v7.0.2 plugin, skills, license, and `UPSTREAM.md` |
+| `.opencode/superpowers.lock` | Pinned Superpowers repository, ref, commit, tree hash, and patch hash |
+| `.opencode/superpowers-local.patch` | Local TDD and subagent template edits applied to the vendored tree |
 | `.opencode/skills/technical-writer/` | 10 vendored technical-writer skills, MIT license, and upstream pin |
 | `.opencode/skills/elements-of-style/` | Vendored Elements of Style reference and local wrapper |
 | `.opencode/skills/diagramming-processes/` | Local Excalidraw-only diagramming skill, references, and templates |
 | `.opencode/skills/writing-commits-and-pull-requests/` | Local skill for commit messages, pull request text, and review comments |
-| `NOTICE` | Third-party writing material attribution |
+| `NOTICE` | Third-party writing and Superpowers attribution |
 | `scripts/render-excalidraw.sh` | Render `.excalidraw` sources to PNG beside them |
+| `scripts/update-superpowers.sh` | Refresh or verify the vendored Superpowers tree |
 | `scripts/update-writing-skills.sh` | Refresh or verify the vendored writing skills |
 | `research/` | Local research artifacts (gitignored) |
 | `repos/` | Local multi-repo clones (gitignored, created by host-init) |
@@ -278,13 +286,100 @@ In VS Code, `${localEnv:...}` is resolved from the environment of the process th
 The config keeps the writable Kubernetes config inside the container and leaves OpenCode's project settings in the workspace:
 
 - `KUBECONFIG=/home/developer/.kube/config` — the container-local file lives in the `kubeconfig` volume and is where kind and kubectl write new contexts. It is intentionally the only default path: client-go locks every file in `KUBECONFIG`, and a workspace path on macOS VirtioFS can break `kind`. To use a project kubeconfig at `.kube/config`, merge or copy it manually; see [kind fails with `config.lock: permission denied`](#kind-fails-with-configlock-permission-denied).
-- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository keeps it minimal: it defines no MCP servers. The Superpowers plugin is loaded by `.opencode/opencode.global.json`; add project-specific OpenCode settings to the same file.
+- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository keeps it minimal: it defines no MCP servers. The Superpowers plugin is loaded by `.opencode/opencode.global.json`; add project-specific OpenCode settings to `opencode.jsonc`.
 - `STARSHIP_CONFIG=/workspace/.devcontainer/starship.toml` — the prompt config shipped with this base.
 
 Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your project uses different paths. The configuration also assumes the workspace is mounted at `/workspace`; if you change `workspaceFolder`, update the `/workspace` paths in `containerEnv`, `remoteEnv`, and the `.bashrc` hook in `post-create.sh`.
 
 > [!WARNING]
 > Kubeconfig files usually contain credentials. Do not commit `.kube/config` unless it is safe to share.
+
+### Control plane and agent workflow
+
+`.opencode/` is the canonical control plane. `post-create.sh` symlinks its global
+config, agents, and skills into `~/.config/opencode/`, so the workspace and every
+clone under `/workspace/repos` use the same agents and skills.
+
+`orchestrator` is the only primary agent and the default. It owns the request,
+plan, task ledger, delegation, approvals, and final report. The other eight
+agents are subagents:
+
+| Agent | Responsibility |
+| --- | --- |
+| `orchestrator` | Request, plan, ledger, delegation, approvals, and final report |
+| `research` | Current web evidence and cited notes under `research/` |
+| `copy-writer` | Finished prose and Excalidraw diagrams |
+| `design` | Two to four options, trade-offs, a recommendation, and a test strategy |
+| `rubber-duck` | Adversarial critique with severity-ranked findings |
+| `task-enumerator` | Ordered, independently testable TDD tasks |
+| `implementer` | Red-green-refactor implementation with red and green evidence |
+| `validator` | Independent test rerun and acceptance review with a PASS or FAIL verdict |
+| `security-reviewer` | Threat model and security review of the branch and host configuration |
+
+The orchestrator delegates in this order:
+
+1. Intake: restate the request and identify the target repository.
+2. Research and design: dispatch `research` when current external evidence is
+   needed, `design` for options, and `rubber-duck` to attack the chosen proposal.
+3. Planning: dispatch `task-enumerator` for ordered tasks, then write the plan.
+4. Execution: dispatch one `implementer` per task and `validator` after each
+   task. Do not run implementers in parallel on shared files.
+5. Documentation gate: after behavior is verified, `copy-writer` updates the
+   affected documents. Any change in behavior, command, path, permission, or
+   policy needs a matching document change. `copy-writer` cannot edit
+   `.opencode/**`, code, or tests; an implementer writes those and `copy-writer`
+   reviews the prose.
+6. Final gates: `validator` runs the full suite on the final tree, and
+   `security-reviewer` reviews the branch and host configuration.
+7. Merge and push only with explicit user approval.
+
+`build` and `plan` are disabled in `.opencode/opencode.global.json` so
+`orchestrator` is the only primary. Re-enable either one by removing its
+`disabled` entry from the `agents` object and starting a new session. Existing
+sessions keep the agent they stored and need a new session to pick up the
+change.
+
+Two maintainer-only scripts verify the vendored trees.
+`scripts/update-superpowers.sh --check` compares `.opencode/superpowers/` and
+`.opencode/superpowers-local.patch` with the pin in `.opencode/superpowers.lock`.
+`scripts/update-writing-skills.sh --check` compares the technical-writer and
+Elements of Style trees with their pinned commits. Both need network access and
+do not run in `post-create.sh` or the smoke suite.
+
+### Change an agent model
+
+Every agent file in `.opencode/agents/` has its own `model:` line. All nine
+agents use `opencode-go/deepseek-v4.1-flash`. To change one agent's model, edit
+its `model:` line and the matching static expectation in
+`test/devcontainer-smoke.sh` in the same change. The static suite checks the
+exact string for every agent, so a model edit without the test edit fails
+`static`.
+
+Apply the change to the running service:
+
+```bash
+opencode reload
+```
+
+### Test-driven development
+
+Every code, configuration, script, and testable infrastructure change uses
+red-green-refactor and starts with a failing test. The `implementer` writes the
+smallest test that expresses the required behavior, runs it and watches it fail
+for the intended reason, writes the smallest change that makes it pass, then
+refactors without changing behavior. It records the red command and output and
+the green command and output in the task report. `validator` checks that the
+test exists and that the red output failed for the intended reason.
+
+A task is done when the new test passes and the existing suite still passes. "I
+tested it manually" is not a substitute for a red test.
+
+Exceptions require explicit user approval. The orchestrator records the
+approval, scope, and reason in the task ledger and the pull request. Neither the
+orchestrator nor the implementer may approve its own exception.
+
+Documentation and prose use the writing skills and a review pass instead of TDD,
+but their links, commands, and claims must still be checked.
 
 ### Host MCP and agent overrides
 
@@ -395,7 +490,7 @@ Editing `.env` in a live interactive shell leaves the old exported values in tha
 
 ### Research subagent
 
-The project config also defines a `research` subagent and a `run-research` skill for evidence-backed web research. Parallel Search and Brave Search are configured in `~/.devcontainer/opencode/opencode.json` and mounted read-only at `/etc/opencode`; the project `opencode.jsonc` defines no MCP servers. The subagent uses those host servers as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
+The control plane defines a `research` subagent and a `run-research` skill for evidence-backed web research. Parallel Search and Brave Search come from the host overlay at `~/.devcontainer/opencode/opencode.json`, mounted read-only at `/etc/opencode`; the project `opencode.jsonc` defines no MCP servers. The subagent uses those host servers as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
 
 Invoke the skill with a research question:
 
@@ -419,11 +514,19 @@ research/<YYYY-MM-DD>-<slug>/
 
 `research/` is gitignored; do not commit reports or evidence notes. The `research` subagent can write only under `research/**` and cannot use shell or Code Mode, launch subagents, or ask the user.
 
-`BRAVE_API_KEY` must be set before OpenCode starts. If it is missing or either host MCP server fails, the research agents continue with the other provider and record the degraded mode. A repository without the host overlay has no research MCP servers at all. If both MCPs are unavailable, the run marks the affected claims `unverified` rather than falling back to built-in search. Amazon detail pages and Reddit may block fetching; the report marks those claims `unverified` rather than inventing them.
+The Brave server reads `~/.devcontainer/opencode/secrets/brave_api_key`, which
+must be a non-empty file before OpenCode starts; `post-create.sh` fails with the
+path when a `{file:/etc/opencode/...}` reference is missing, unreadable, or
+empty. If one host MCP server fails at runtime, the research agents continue
+with the other provider and record the degraded mode. A repository without the
+host overlay has no research MCP servers; the worker marks unsupported claims
+`unverified` rather than falling back to built-in search. Amazon detail pages and
+Reddit may block fetching; the report marks those claims `unverified` rather
+than inventing them.
 
 ### Copy writer subagent
 
-The project config defines a `copy-writer` subagent for finished prose and
+The control plane defines a `copy-writer` subagent for finished prose and
 Excalidraw diagrams: documentation, READMEs, design docs, ADRs, runbooks,
 changelogs, postmortems, issue descriptions, API references, commit messages,
 pull request descriptions and comments, release notes, error messages, and
@@ -494,11 +597,11 @@ GTK and Mesa dependencies to the image; the CLI does not download a browser.
 The `diagramming-processes` skill is not refreshed by
 `scripts/update-writing-skills.sh`; it is repository-owned.
 
-To refresh the vendored trees, run `scripts/update-writing-skills.sh`; use
-`--check` to verify that the working tree matches the pinned commits. To
+To refresh the vendored writing trees, run `scripts/update-writing-skills.sh`;
+use `--check` to verify that the working tree matches the pinned commits. To
 change a pin, edit the constants at the top of the script and update the
-matching `UPSTREAM.md` and `NOTICE` in the same commit. Both commands need
-network access and are not part of the smoke suite.
+matching `UPSTREAM.md` and `NOTICE` in the same commit. The script needs
+network access and is not part of the smoke suite.
 
 ### Design notes
 

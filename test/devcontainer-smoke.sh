@@ -72,9 +72,9 @@ prepare_copy() {
   rm -rf -- "$COPY"
   mkdir -p "$COPY"
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a --exclude .git --exclude test "$REPO/" "$COPY/"
+    rsync -a --exclude .git --exclude test --exclude repos "$REPO/" "$COPY/"
   else
-    (cd "$REPO" && tar --exclude .git --exclude test -cf - .) | (cd "$COPY" && tar -xf -)
+    (cd "$REPO" && tar --exclude .git --exclude test --exclude repos -cf - .) | (cd "$COPY" && tar -xf -)
   fi
   python3 - "$COPY/.devcontainer/devcontainer.json" "$PREFIX" "$COPY" <<'PY'
 import json, sys
@@ -578,6 +578,54 @@ if readme_path.is_file():
           'README.md missing the Host MCP and agent overrides section')
     check('~/.devcontainer/opencode/opencode.json' in readme_text,
           'README.md must say Parallel and Brave are configured in the host overlay')
+    check('/etc/opencode' in readme_text,
+          'README.md must document the host-only MCP overlay at /etc/opencode')
+
+    def readme_section(heading):
+        start = readme_text.find(heading)
+        if start == -1:
+            return None
+        rest = readme_text[start + len(heading):]
+        following = re.search(r'(?m)^#{3} ', rest)
+        return rest[:following.start()] if following else rest
+
+    control_section = readme_section('### Control plane and agent workflow')
+    check(control_section is not None,
+          'README.md missing the Control plane and agent workflow section')
+    if control_section is not None:
+        for role in ('orchestrator', 'research', 'copy-writer', 'design',
+                     'rubber-duck', 'task-enumerator', 'implementer',
+                     'validator', 'security-reviewer'):
+            check(role in control_section,
+                  f'README.md control plane section must name {role}')
+
+    model_section = readme_section('### Change an agent model')
+    check(model_section is not None,
+          'README.md missing the Change an agent model section')
+    if model_section is not None:
+        for marker in ('model:', 'test/devcontainer-smoke.sh', 'same change'):
+            check(marker in model_section,
+                  f'README.md model section missing {marker!r}')
+
+    tdd_section = readme_section('### Test-driven development')
+    check(tdd_section is not None,
+          'README.md missing the Test-driven development section')
+    if tdd_section is not None:
+        for marker in ('red-green-refactor', 'explicit user approval'):
+            check(marker in tdd_section,
+                  f'README.md TDD section missing {marker!r}')
+
+    for command in ('scripts/update-superpowers.sh --check',
+                    'scripts/update-writing-skills.sh --check'):
+        check(command in readme_text,
+              f'README.md missing update command {command!r}')
+
+    code_review_skill = repo / '.opencode' / 'skills' / 'code-review' / 'SKILL.md'
+    check(code_review_skill.is_file(), 'code-review skill missing')
+    if code_review_skill.is_file():
+        banned = 'Ask the orchestrator for anything missing before you start.'
+        check(banned not in code_review_skill.read_text(),
+              'code-review skill must not tell reviewers to ask the orchestrator before starting')
 
 update_script = repo / 'scripts' / 'update-writing-skills.sh'
 check(update_script.is_file(), 'writing skills update script missing')
@@ -695,6 +743,20 @@ check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_worktree_pos <
       'repo worktree test must be inside the disposable-copy gate')
 check('hermetic repo remote missing' not in smoke_body,
       'repo test must skip, not fail, when the hermetic remote is absent')
+
+copy_start = smoke_text.find('prepare_copy() {')
+copy_end = smoke_text.find('\n}\n\nlast_copy() {', copy_start)
+copy_body = smoke_text[copy_start:copy_end] if copy_start != -1 and copy_end != -1 else ''
+check(copy_body != '', 'prepare_copy function missing')
+if copy_body:
+    copy_lines = copy_body.splitlines()
+    rsync_line = next((line for line in copy_lines if re.match(r'\s*rsync\b', line)), '')
+    tar_line = next((line for line in copy_lines if re.search(r'\btar\b', line)
+                     and '--exclude' in line), '')
+    check('--exclude repos' in rsync_line,
+          'prepare_copy rsync must exclude repos/')
+    check('--exclude repos' in tar_line,
+          'prepare_copy tar fallback must exclude repos/')
 
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
@@ -883,6 +945,8 @@ if readme_path.is_file():
           'README.md persistent volumes table must not list worktrees')
     check('cp -R /tmp/devcontainer-base/.opencode/. .opencode/' in readme_text,
           'README.md copy flow must copy .opencode/')
+    check('cp -R /tmp/devcontainer-base/.devcontainer/. .devcontainer/' in readme_text,
+          'README.md copy flow must copy .devcontainer/ alongside .opencode/')
 
 # --- timezone contract ---
 container_tz = container_env.get('TZ')
@@ -1444,7 +1508,18 @@ PY
       bad "host overlay: research agent override"
     fi
   fi
-  if opencode mcp list >"$HOME/.mcp-list.txt" 2>&1; then
+  # The first `opencode mcp list` can start the background service and read an
+  # empty list before it has loaded the host overlay. Retry before failing.
+  mcp_listed=0
+  for _ in $(seq 1 15); do
+    if opencode mcp list >"$HOME/.mcp-list.txt" 2>&1 \
+        && grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"; then
+      mcp_listed=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$mcp_listed" -eq 1 ]; then
     check "host overlay: probe-disabled listed" grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"
     if [ -f /etc/opencode/opencode.json ]; then
       for server in parallel-search brave-search-mcp-server; do
@@ -1454,7 +1529,8 @@ PY
       done
     fi
   else
-    bad "host overlay: mcp list failed"
+    check "host overlay: probe-disabled listed" grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"
+    sed -n '1,40p' "$HOME/.mcp-list.txt" >&2 || true
   fi
   test_root="$(mktemp -d)"
   if [ -d /workspace/test-remote.git ]; then
