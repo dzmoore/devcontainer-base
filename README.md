@@ -588,6 +588,8 @@ CID=<container-id> test/devcontainer-smoke.sh paste-real
 
 > [!NOTE]
 > `smoke-real` requires `TZ` in the container environment. Containers created before the timezone change have no `ENV TZ` and fail the new `env: TZ` check until they are recreated.
+>
+> New-format containers also need `/workspace/repos` and `/worktrees` as a symlink to it; recreate older containers so `post-create.sh` can apply both. The local `repo clone`/`repo worktree` exercise uses the hermetic bare remote created in the disposable copy, so it runs only in the `prepare_copy` modes and is skipped for `smoke-real`.
 
 ## Troubleshooting
 

@@ -679,6 +679,9 @@ marker_pos = smoke_body.find('/workspace/.dc-smoke-prefix')
 guard_pos = smoke_body.find('if [ "$hermetic" -eq 1 ]')
 desc_pos = smoke_body.find('Host test research override')
 probe_pos = smoke_body.find('check "host overlay: probe-disabled listed"')
+gate_end_pos = smoke_body.find('check "host overlay: /etc/opencode read-only"')
+repo_clone_pos = smoke_body.find('repo clone: local remote')
+repo_worktree_pos = smoke_body.find('repo worktree: path exists')
 check(marker_pos != -1, 'run_smoke must detect the disposable copy marker')
 check(guard_pos != -1 and marker_pos < guard_pos,
       'run_smoke must gate hermetic checks on the disposable copy')
@@ -686,6 +689,12 @@ check(guard_pos != -1 and desc_pos > guard_pos,
       'research override assertion must be inside the hermetic gate')
 check(guard_pos != -1 and probe_pos > guard_pos,
       'probe-disabled assertion must be inside the hermetic gate')
+check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_clone_pos < gate_end_pos,
+      'repo clone test must be inside the disposable-copy gate')
+check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_worktree_pos < gate_end_pos,
+      'repo worktree test must be inside the disposable-copy gate')
+check('hermetic repo remote missing' not in smoke_body,
+      'repo test must skip, not fail, when the hermetic remote is absent')
 
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
@@ -1447,6 +1456,31 @@ PY
   else
     bad "host overlay: mcp list failed"
   fi
+  test_root="$(mktemp -d)"
+  if [ -d /workspace/test-remote.git ]; then
+    if REPO_ROOT="$test_root" repo clone "file:///workspace/test-remote.git" >"$test_root/clone.log" 2>&1; then
+      pass "repo clone: local remote"
+    else
+      bad "repo clone: local remote"
+      sed -n '1,40p' "$test_root/clone.log" >&2 || true
+    fi
+    clone_dir="$test_root/local/test-remote"
+    check "repo clone: checkout exists" test -d "$clone_dir"
+    if [ -d "$clone_dir" ]; then
+      if ( cd "$clone_dir" && REPO_ROOT="$test_root" repo worktree smoke-wt smoke-branch ) >"$test_root/worktree.log" 2>&1; then
+        pass "repo worktree: created"
+      else
+        bad "repo worktree: created"
+        sed -n '1,40p' "$test_root/worktree.log" >&2 || true
+      fi
+      worktree_dir="$test_root/.worktrees/local/test-remote/smoke-wt"
+      check "repo worktree: path exists" test -d "$worktree_dir"
+      if [ -d "$worktree_dir" ]; then
+        git -C "$clone_dir" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || rm -rf "$worktree_dir"
+      fi
+    fi
+    rm -rf "$test_root"
+  fi
 fi
 check "host overlay: /etc/opencode read-only" bash -c \
   'findmnt -no OPTIONS /etc/opencode 2>/dev/null | tr "," "\n" | grep -qx ro'
@@ -1479,34 +1513,6 @@ if [ -L /worktrees ]; then
   check_eq "/worktrees symlink" /workspace/repos "$(readlink /worktrees)"
 else
   bad "/worktrees must be a symlink to /workspace/repos"
-fi
-
-test_root="$(mktemp -d)"
-if [ -d /workspace/test-remote.git ]; then
-  if REPO_ROOT="$test_root" repo clone "file:///workspace/test-remote.git" >"$test_root/clone.log" 2>&1; then
-    pass "repo clone: local remote"
-  else
-    bad "repo clone: local remote"
-    sed -n '1,40p' "$test_root/clone.log" >&2 || true
-  fi
-  clone_dir="$test_root/local/test-remote"
-  check "repo clone: checkout exists" test -d "$clone_dir"
-  if [ -d "$clone_dir" ]; then
-    if ( cd "$clone_dir" && REPO_ROOT="$test_root" repo worktree smoke-wt smoke-branch ) >"$test_root/worktree.log" 2>&1; then
-      pass "repo worktree: created"
-    else
-      bad "repo worktree: created"
-      sed -n '1,40p' "$test_root/worktree.log" >&2 || true
-    fi
-    worktree_dir="$test_root/.worktrees/local/test-remote/smoke-wt"
-    check "repo worktree: path exists" test -d "$worktree_dir"
-    if [ -d "$worktree_dir" ]; then
-      git -C "$clone_dir" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || rm -rf "$worktree_dir"
-    fi
-  fi
-  rm -rf "$test_root"
-else
-  bad "hermetic repo remote missing"
 fi
 
 check "bashrc: kubectl aliases" grep -q '# --- kubectl aliases ---' "$HOME/.bashrc"
