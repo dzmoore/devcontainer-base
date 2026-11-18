@@ -26,7 +26,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 
 - **Polyglot by default** — Node.js, Bun, Python with uv, and Go are ready to use.
 - **Cloud-native tooling** — Docker-in-Docker, Compose, Buildx, kubectl, Helm, kind, and kubectx/kubens.
-- **AI-assisted workflow** — OpenCode and persistent tool state.
+- **AI-assisted workflow** — OpenCode, persistent tool state, and short-lived GitHub App installation tokens for `gh` and `git`.
 - **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, paste-safe terminal settings, and a configurable system timezone that defaults to US/Pacific.
 - **Reproducible** — pinned build-time tools and a Dev Container feature lockfile.
 - **Tested** — a smoke suite covers build, runtime, shell paste, idempotency, volume lifecycle, and timezone overrides.
@@ -124,22 +124,25 @@ If the project already has a `.devcontainer/`, merge the files instead of overwr
 
 Two read-only bind mounts make host-side secrets available inside the container:
 
-- `~/.devcontainer/github/.env` provides `GITHUB_TOKEN` for `gh`; `post-create.sh` also uses it to log Helm into `ghcr.io`.
+- `~/.devcontainer/github/` provides GitHub credentials. `.env` can hold `GITHUB_TOKEN` for `gh` and the `post-create.sh` Helm `ghcr.io` login, plus the GitHub App variables. `app.pem` holds the App private key.
 - `~/.devcontainer/brave/.env` provides `BRAVE_API_KEY` to tools that read it, such as Brave Search integrations.
 
 Create the files on the host before the first launch:
 
 ```bash
 mkdir -p ~/.devcontainer/github ~/.devcontainer/brave
+chmod 700 ~/.devcontainer/github
 printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" > ~/.devcontainer/github/.env
 printf 'BRAVE_API_KEY=%s\n' "$BRAVE_API_KEY" > ~/.devcontainer/brave/.env
 chmod 600 ~/.devcontainer/github/.env ~/.devcontainer/brave/.env
 ```
 
+To use the GitHub App flow instead of, or in addition to, the PAT, put the App variables in the same `.env` and place the private key at `~/.devcontainer/github/app.pem`; see [GitHub App tokens](#github-app-tokens). The existing `/home/developer/.dc/github/.env` path does not change because the whole directory is mounted read-only.
+
 The files are mounted read-only and sourced by interactive bash shells. If you do not need them, remove the corresponding entries from `mounts` in `devcontainer.json`.
 
 > [!IMPORTANT]
-> Create the `.env` files before the first launch. When Docker creates a missing bind source itself, it may create a directory instead of a file. If that happens, remove the directory and create the file before starting the container again.
+> Create the GitHub directory and files before the first launch. The GitHub source is now a directory mount; Docker may create a missing directory for it. The Brave source is still a single file, so if Docker creates a directory at `~/.devcontainer/brave/.env`, remove it and create the file before starting the container again.
 
 ## Configuration
 
@@ -150,7 +153,9 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `.devcontainer/Dockerfile` | Debian base, non-root user, locale, timezone default, and pinned CLI tools |
 | `.devcontainer/devcontainer.json` | Features, mounts, environment, and lifecycle hooks |
 | `.devcontainer/devcontainer-lock.json` | Resolved Dev Container Feature versions |
-| `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, env loading, ownership repair, shell hooks, Helm login |
+| `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, env loading, ownership repair, shell hooks, helper symlinks, Helm login |
+| `.devcontainer/bin/gh-app-token` | GitHub App installation token CLI: token, JSON, check, exec, and Git credential modes |
+| `.devcontainer/bin/gh-app` | Wrapper that runs `gh` with a freshly minted installation token |
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
 | `opencode.jsonc` | OpenCode project config; enables the Superpowers plugin and configures the Parallel Search and Brave Search MCP servers |
@@ -233,6 +238,67 @@ Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your 
 > [!WARNING]
 > Kubeconfig files usually contain credentials. Do not commit `.kube/config` unless it is safe to share.
 
+### GitHub App tokens
+
+The `gh-app-token` helper mints short-lived GitHub App installation tokens on demand, so `gh`, `git`, and agents do not need a long-lived PAT in the container. It signs an RS256 JWT with the App private key and exchanges it at `POST /app/installations/<id>/access_tokens`. The App client secret is not used for this flow and should not be placed in the container.
+
+The App must be installed on the target user or organization, with the repository access and permissions your commands need; an installation token cannot exceed them. Copy the installation ID from the App installation settings URL or from `GET /app/installations`.
+
+Host files:
+
+```text
+~/.devcontainer/github/
+  .env       # App ids plus optional GITHUB_TOKEN
+  app.pem    # GitHub App private key
+```
+
+Example `.env`:
+
+```dotenv
+GITHUB_APP_CLIENT_ID=Iv1.example
+GITHUB_APP_INSTALLATION_ID=12345678
+# Optional (defaults shown):
+# GITHUB_APP_PRIVATE_KEY_FILE=/home/developer/.dc/github/app.pem
+# GITHUB_APP_ENV_FILE=/home/developer/.dc/github/.env
+# GITHUB_API_URL=https://api.github.com
+# GITHUB_SERVER_URL=https://github.com
+# GITHUB_API_VERSION=2026-03-10
+# Existing PAT fallback for Helm and other tools:
+# GITHUB_TOKEN=ghp_example
+```
+
+`GITHUB_APP_CLIENT_ID` is preferred; `GITHUB_APP_ID` works as a fallback. The key path and env-file path are container paths. Both `GITHUB_API_URL` and `GITHUB_SERVER_URL` must use HTTPS, except for loopback test URLs. Set `GITHUB_API_VERSION` to match an older GitHub Enterprise Server instance, or leave it empty to omit the header.
+
+`post-create.sh` symlinks both helpers into `~/.local/bin`, which is on the agent PATH:
+
+```bash
+gh-app-token                       # print a token
+gh-app-token check                 # mint and summarize without printing the token
+gh-app-token json                  # full API response, including expires_at
+gh-app-token token --repo owner/repo --permission contents=write
+gh-app-token exec -- gh pr list    # run one command with GH_TOKEN/GITHUB_TOKEN
+gh-app pr list                     # wrapper around gh
+```
+
+`exec` sets `GH_HOST` and the matching `gh` variables: `GH_TOKEN`/`GITHUB_TOKEN` for `github.com`, `github.localhost`, and `*.ghe.com`; `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` for other hosts. For a true GitHub Enterprise Server host, `gh` may infer a host from a repository remote, so run it in trusted repositories or verify the remote.
+
+To let Git authenticate without exporting a token, install the credential helper for your host:
+
+```bash
+git config --global --replace-all credential.https://github.com.helper \
+  '!/home/developer/.local/bin/gh-app-token git-credential'
+```
+
+For GitHub Enterprise Server, replace `github.com` with the server host and set `GITHUB_SERVER_URL`. The helper only answers HTTPS requests for the configured host and port.
+
+Installation tokens expire after about one hour. The script mints on demand and does not cache them. The Helm `ghcr.io` login still uses `GITHUB_TOKEN` (or a manual login), because a one-hour installation token is not suitable for a persistent Helm registry login. A user-level Git credential store can still store or cache a token after the helper returns it (`store`, `osxkeychain`, and `manager` persist to disk; `cache` keeps it in memory); remove or scope such helpers for GitHub if that matters.
+
+`token` and `json` output is sensitive. `gh-app` keeps the token in the child environment, and Git consumes the credential helper output directly.
+
+The read-only mount protects the host copy from modification, not from container processes: any process running as `developer` in the container can read `app.pem` and mint tokens. Keep the App's permissions minimal and treat container access as App access.
+
+Editing `.env` in a live interactive shell leaves the old exported values in that shell because process environment wins. Run `reload` or open a new shell after changing it.
+
 ### Research subagent
 
 The project config also defines a `research` subagent and a `run-research` skill for evidence-backed web research. The subagent uses the Parallel Search and Brave Search MCP servers configured in `opencode.jsonc` as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
@@ -270,6 +336,9 @@ A few choices are intentional and worth knowing before changing the setup:
 - `less` is installed from Debian because Glow's `--pager` mode defaults to `less -r`, and `debian:bookworm-slim` does not include a pager.
 - Mount targets are created and chowned in the image so fresh named volumes are writable by `developer`; `post-create.sh` repairs existing volumes.
 - `post-create.sh` removes VS Code's `credsStore` from `~/.docker/config.json` so Docker registry auth does not fail outside a live VS Code session.
+- The GitHub credential source is a read-only directory mount so `app.pem` can sit next to `.env`; the in-container `.env` path is unchanged. `gh-app-token` is dependency-free Python 3 plus the `openssl` CLI, and `post-create.sh` symlinks it and `gh-app` into `~/.local/bin`.
+- The App client secret is not needed for installation tokens and is deliberately not mounted. The helper mints tokens on demand without caching; `check`, `exec`, and `git-credential` avoid printing tokens, while `token` and `json` are explicitly sensitive. Read-only protects the host copy, not confidentiality: any `developer` process can read `app.pem` and mint tokens, so keep App permissions minimal.
+- The Helm `ghcr.io` login remains PAT-backed because installation tokens expire after about an hour.
 - Terminal setup falls back to `xterm-256color` when the terminal's terminfo is missing, disables flow control (`stty -ixon`), and enables bracketed paste.
 - kubectl and Helm are installed directly from official release artifacts instead of the `kubectl-helm-minikube` feature. The feature was removed because this setup does not need minikube, and direct installs allow exact pins and digest verification; the feature's Copilot customization is intentionally dropped.
 - The Dockerfile hardcodes the official per-architecture SHA256 digests next to the source URLs and verifies each download with `sha256sum --strict`. The repository, not a same-origin checksum, is the trust anchor.
@@ -293,6 +362,7 @@ These do not build or start a container:
 ```bash
 test/devcontainer-smoke.sh guard
 test/devcontainer-smoke.sh static
+test/devcontainer-smoke.sh app-token
 ```
 
 ### Full suite
@@ -302,13 +372,13 @@ test/devcontainer-smoke.sh all
 test/devcontainer-smoke.sh cleanup
 ```
 
-`all` runs the guard self-test, static checks, image build, pre- and post-create smoke tests, PTY paste tests, idempotency, container recreation, fresh-volume tests, and the timezone override and invalid-zone checks. It can take several minutes and requires Docker plus the Dev Containers CLI. It leaves the disposable copy and volumes in place for inspection; run `cleanup` when you are done.
+`all` runs the guard self-test, static checks, GitHub App token tests, image build, pre- and post-create smoke tests, PTY paste tests, idempotency, container recreation, fresh-volume tests, and the timezone override and invalid-zone checks. It can take several minutes and requires Docker plus the Dev Containers CLI. It leaves the disposable copy and volumes in place for inspection; run `cleanup` when you are done.
 
 The PTY test covers raw paste, bracketed paste, heredocs, `TERM` fallback, and `stty -ixon` across `xterm-ghostty`, `dumb`, and `xterm-256color`.
 
 Timezone coverage is layered: `static` checks the Dockerfile default, `tzdata`, and the post-create block; `pre` proves the image is correct with `--skip-post-create`; `up`, `smoke`, and `idempotent` prove the reconciled runtime state. The offset assertions use fixed UTC instants in July and January, so they exercise daylight saving rules without depending on the current date.
 
-The tests use Python 3 on the host for JSON parsing and the PTY paste test. They target Linux, macOS, or WSL. Set `SMOKE_ROOT` to move the disposable copy, `REPO` to test another checkout, or `CID` to target an existing container.
+The tests use Python 3 on the host for JSON parsing and the PTY paste test, and Python 3 plus OpenSSL for the GitHub App token tests. They target Linux, macOS, or WSL. Set `SMOKE_ROOT` to move the disposable copy, `REPO` to test another checkout, or `CID` to target an existing container.
 
 ### Test modes
 
@@ -316,6 +386,7 @@ The tests use Python 3 on the host for JSON parsing and the PTY paste test. They
 | --- | --- |
 | `guard` | Verifies destructive-operation guards reject unsafe paths and volume prefixes |
 | `static` | Validates JSON, feature lock, environment, mounts, Dockerfile, and shell syntax |
+| `app-token` | Runs the host-side GitHub App token tests; no container or real GitHub API needed |
 | `build` | Runs `static`, then builds the image and Dev Container Features |
 | `pre` | Starts the container with `--skip-post-create` and checks base tooling |
 | `up` | Starts the container with post-create and runs the runtime smoke test |
@@ -393,7 +464,31 @@ If you need a project config for read-only commands and are not using kind, you 
 
 ### Host secret mounts are empty or are directories
 
-Create the `.env` files on the host before the first launch (see [Optional: host secrets](#optional-host-secrets)). If Docker already created a directory at the mount path, remove it and create the file before starting the container again.
+Create the GitHub directory and `.env` files on the host before the first launch (see [Optional: host secrets](#optional-host-secrets)). The GitHub source is a directory mount; if it is missing, add `.env` and `app.pem` and restart the container. The Brave source is a single file; if Docker created a directory at `~/.devcontainer/brave/.env`, remove it and create the file before starting the container again.
+
+### `gh-app-token` reports missing configuration
+
+Create `~/.devcontainer/github/.env` with `GITHUB_APP_CLIENT_ID` (or `GITHUB_APP_ID`) and `GITHUB_APP_INSTALLATION_ID`, and put the private key at `~/.devcontainer/github/app.pem` (or set `GITHUB_APP_PRIVATE_KEY_FILE` to its in-container path). Recreate the container after changing the mount or host files. `gh-app-token check` verifies the setup end to end without printing the token.
+
+### GitHub App token request fails
+
+- HTTP 401: usually a wrong client ID or private key, clock skew, or an expired JWT. Check the App settings and the host clock, then retry.
+- HTTP 404: the installation ID is wrong, or the App is not installed on that account. Copy the installation ID again from the App installation settings.
+- HTTP 403: the App installation does not have the requested repository access or permission. Adjust the App installation or the `--repo`/`--permission` scope.
+- `GITHUB_API_URL`/`GITHUB_SERVER_URL` errors: use HTTPS (except loopback test URLs) and a valid host and port. Set `GITHUB_API_VERSION` to match an older GitHub Enterprise Server instance, or leave it empty to omit the header.
+- A malformed `.env` line reports the path and line number without echoing the value. Fix the line to `KEY=VALUE`.
+
+### `git push` does not use the App token
+
+Install the credential helper for the host you use. The helper only answers HTTPS requests for the configured host and port, and it returns no credentials for HTTP, a different host, or a different port. Check that the App has `Contents` access to the repository. If a user-level `credential.helper` such as `store`, `osxkeychain`, or `manager` is also configured, Git may persist the minted token after the helper returns it; remove or scope that helper for GitHub if that matters.
+
+### `gh-app-token` uses old values after editing `.env`
+
+Process environment variables win over the file. Interactive shells export `GITHUB_APP_*` from `.env`; run `reload` or open a new shell after editing it.
+
+### Helm still uses the PAT
+
+The post-create `ghcr.io` login is intentionally PAT-backed; installation tokens expire after about an hour. Keep a `GITHUB_TOKEN` with package access or log in manually when needed.
 
 ### The prompt shows boxes instead of icons
 

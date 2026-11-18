@@ -7,7 +7,7 @@
 # the smoke tests do not write to them. The real repo's container and volumes
 # are never modified by this script.
 #
-# Usage: test/devcontainer-smoke.sh [guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all]
+# Usage: test/devcontainer-smoke.sh [guard|static|app-token|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all]
 # Set CID=<container-id> for smoke-real and paste-real.
 set -euo pipefail
 
@@ -190,7 +190,7 @@ PY
 run_static() {
   say "T1 static contract"
   python3 - "$REPO" <<'PY'
-import json, pathlib, re, sys
+import json, os, pathlib, re, sys
 repo = pathlib.Path(sys.argv[1])
 dc_path = repo / '.devcontainer' / 'devcontainer.json'
 lock_path = repo / '.devcontainer' / 'devcontainer-lock.json'
@@ -345,6 +345,37 @@ check('# --- starship prompt ---' in post, 'post-create.sh must load the Starshi
 check((repo / '.devcontainer' / 'aliases.sh').is_file(), 'aliases.sh missing')
 check((repo / '.devcontainer' / 'starship.toml').is_file(), 'starship.toml missing')
 
+github_mounts = []
+for mount in dc.get('mounts', []):
+    parts = mount.split(',')
+    m = dict(part.split('=', 1) for part in parts if '=' in part)
+    target = m.get('target') or m.get('dst') or ''
+    if target == '/home/developer/.dc/github':
+        github_mounts.append((parts, m))
+check(len(github_mounts) == 1, 'devcontainer.json must mount the GitHub credential directory once')
+if github_mounts:
+    parts, m = github_mounts[0]
+    check((m.get('src') or m.get('source')) == '${localEnv:HOME}/.devcontainer/github',
+          'GitHub credential mount must use the host directory')
+    check(m.get('type') == 'bind', 'GitHub credential mount must be a bind mount')
+    check('ro' in parts, 'GitHub credential mount must be read-only')
+    check('bind-create-src' in parts, 'GitHub credential mount must use bind-create-src')
+check(not any('/.dc/github/.env' in mount for mount in dc.get('mounts', [])),
+      'GitHub mount must be the directory, not the single .env file')
+
+for name in ('gh-app-token', 'gh-app'):
+    helper = repo / '.devcontainer' / 'bin' / name
+    check(helper.is_file(), f'{name} missing')
+    check(os.access(helper, os.X_OK), f'{name} must be executable')
+
+if apt_block:
+    check(re.search(r'(?m)^\s*openssl\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
+          'Dockerfile apt package block must install openssl')
+check('for helper in gh-app-token gh-app' in post,
+      'post-create.sh must install both GitHub App helpers')
+check('ln -sfn "$src" "$HOME/.local/bin/$helper"' in post,
+      'post-create.sh must symlink the helpers into ~/.local/bin')
+
 # --- timezone contract ---
 container_tz = container_env.get('TZ')
 tz_template = '${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}'
@@ -445,6 +476,15 @@ print('PASS: static contract')
 PY
   bash -n "$REPO/.devcontainer/post-create.sh"
   echo 'PASS: post-create.sh syntax'
+  bash -n "$REPO/.devcontainer/bin/gh-app"
+  python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
+    "$REPO/.devcontainer/bin/gh-app-token"
+  echo 'PASS: GitHub App helper syntax'
+}
+
+run_app_token() {
+  say "T1b GitHub App token tests"
+  python3 "$SCRIPT_DIR/github-app-token-test.py" -v
 }
 
 run_build() {
@@ -596,9 +636,15 @@ check_eq "env: STARSHIP_CONFIG" /workspace/.devcontainer/starship.toml "${STARSH
 check_eq "env: EDITOR" nvim "${EDITOR:-}"
 check_eq "env: KUBECONFIG" /home/developer/.kube/config "${KUBECONFIG:-}"
 
-for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg less nvim starship unzip zip; do
+for c in git curl yq glow opencode go node npm python3 uv bun fzf kind kubectx kubens kubectl helm gh docker ssh rg less nvim starship unzip zip gh-app-token gh-app; do
   check "command: $c" command -v "$c"
 done
+check "run: gh-app-token help" gh-app-token --help
+check "run: gh-app-token missing config" bash -c \
+  'out=$(env -u GITHUB_APP_CLIENT_ID -u GITHUB_APP_ID -u GITHUB_APP_INSTALLATION_ID \
+       -u GITHUB_APP_PRIVATE_KEY_FILE -u GITHUB_API_URL -u GITHUB_SERVER_URL \
+       gh-app-token --env-file /dev/null token 2>&1); rc=$?; \
+       test "$rc" -eq 2 && printf "%s" "$out" | grep -q GITHUB_APP_CLIENT_ID'
 
 arg() { sed -n "s/^ARG $1=//p" /workspace/.devcontainer/Dockerfile | head -1 | tr -d '"'; }
 glow_expected="$(arg GLOW_VERSION)"
@@ -940,6 +986,7 @@ run_cleanup() {
 case "$MODE" in
   guard) run_guard_test ;;
   static) run_static ;;
+  app-token) run_app_token ;;
   build) run_static; run_build ;;
   pre) last_copy; run_up skip; run_pre_smoke ;;
   up) last_copy; run_up; run_smoke ;;
@@ -955,6 +1002,7 @@ case "$MODE" in
   all)
     run_guard_test
     run_static
+    run_app_token
     run_build
     run_up skip
     run_pre_smoke
@@ -966,5 +1014,5 @@ case "$MODE" in
     run_fresh
     run_tz
     ;;
-  *) die "unknown mode: $MODE (use guard|static|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all)" ;;
+  *) die "unknown mode: $MODE (use guard|static|app-token|build|pre|up|smoke|smoke-real|paste|paste-real|idempotent|recreate|fresh|tz|cleanup|all)" ;;
 esac

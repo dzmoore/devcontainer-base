@@ -87,6 +87,14 @@ done
 # parent directories too so tools can create new files under them.
 sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees
 
+echo "Installing GitHub App helper commands..."
+for helper in gh-app-token gh-app; do
+  src="/workspace/.devcontainer/bin/$helper"
+  if [ -x "$src" ]; then
+    ln -sfn "$src" "$HOME/.local/bin/$helper"
+  fi
+done
+
 # Kubernetes client-go locks every file listed in KUBECONFIG. On macOS
 # VirtioFS bind mounts the lock file can be created with mode 000, which makes
 # kind fail with "config.lock: permission denied". Keep the writable default
