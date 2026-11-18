@@ -76,27 +76,56 @@ prepare_copy() {
   else
     (cd "$REPO" && tar --exclude .git --exclude test -cf - .) | (cd "$COPY" && tar -xf -)
   fi
-  python3 - "$COPY/.devcontainer/devcontainer.json" "$PREFIX" <<'PY'
+  python3 - "$COPY/.devcontainer/devcontainer.json" "$PREFIX" "$COPY" <<'PY'
 import json, sys
-path, prefix = sys.argv[1], sys.argv[2]
+path, prefix, copy = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as f:
     data = json.load(f)
 mounts = []
 for mount in data.get('mounts', []):
     parts = mount.split(',')
     is_volume = any(p == 'type=volume' for p in parts)
+    m = dict(part.split('=', 1) for part in parts if '=' in part)
+    target = m.get('target') or m.get('dst') or ''
     out = []
     for part in parts:
         if is_volume and (part.startswith('source=') or part.startswith('src=')):
             key, value = part.split('=', 1)
             part = f'{key}={prefix}{value}'
+        elif target == '/etc/opencode' and (part.startswith('source=') or part.startswith('src=')):
+            key, _ = part.split('=', 1)
+            part = f'{key}={copy}/host-opencode'
         out.append(part)
     mounts.append(','.join(out))
 data['mounts'] = mounts
+data['initializeCommand'] = 'true'
 with open(path, 'w') as f:
     json.dump(data, f, indent=2)
     f.write('\n')
 PY
+  mkdir -p "$COPY/host-opencode/agents"
+  cat >"$COPY/host-opencode/opencode.json" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "probe-disabled": {
+        "type": "local",
+        "command": ["true"],
+        "enabled": false
+      }
+    }
+  }
+}
+JSON
+  cat >"$COPY/host-opencode/agents/research.md" <<'MD'
+---
+description: Host test research override
+mode: subagent
+---
+Host test research override body. Use the test host MCP server for research and
+mark unsupported claims unverified.
+MD
   printf '%s' "$PREFIX" >"$COPY/.dc-smoke-prefix"
   printf '%s' "$COPY" >"$LAST_COPY_FILE"
   echo "PASS: disposable copy and volume prefix $PREFIX"
@@ -356,11 +385,7 @@ if copy_agent.is_file():
     for denied in ('.opencode/**', '.git/**', 'node_modules/**'):
         check(f'resource: "{denied}"' in agent_text,
               f'copy-writer must not edit {denied}')
-    mcp_servers = []
-    if opencode_config.is_file():
-        mcp_servers = re.findall(r'"([^"]+)"\s*:\s*\{\s*"type"',
-                                 opencode_config.read_text())
-    for server in mcp_servers:
+    for server in ('parallel-search', 'brave-search-mcp-server'):
         check(f'action: "{server}_*"' in agent_text,
               f'copy-writer must deny MCP server {server}')
     check('resource: "*--output*"' in agent_text,
@@ -533,6 +558,10 @@ if readme_path.is_file():
                    'obra/the-elements-of-style', '#### Diagrams',
                    'render-excalidraw.sh', 'diagramming-processes'):
         check(marker in readme_text, f'README.md missing {marker}')
+    check('### Host MCP and agent overrides' in readme_text,
+          'README.md missing the Host MCP and agent overrides section')
+    check('~/.devcontainer/opencode/opencode.json' in readme_text,
+          'README.md must say Parallel and Brave are configured in the host overlay')
 
 update_script = repo / 'scripts' / 'update-writing-skills.sh'
 check(update_script.is_file(), 'writing skills update script missing')
@@ -571,12 +600,51 @@ if renderer.is_file():
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
     target = m.get('target') or m.get('dst') or ''
-    check(target.startswith('/home/developer') or target == '/worktrees',
+    check(target.startswith('/home/developer') or target in ('/worktrees', '/etc/opencode'),
           f'mount target outside developer home: {target}')
     check('/home/vscode' not in target, f'vscode mount target: {target}')
 check(any('source=kubeconfig' in mount and 'target=/home/developer/.kube' in mount
           for mount in dc.get('mounts', [])),
       'devcontainer.json must mount the kubeconfig volume at /home/developer/.kube')
+
+# --- host MCP overlay ---
+check(dc.get('initializeCommand') == 'bash .devcontainer/host-init.sh',
+      'initializeCommand must run bash .devcontainer/host-init.sh')
+check(dc.get('updateRemoteUserUID') is True,
+      'updateRemoteUserUID must be true')
+overlay_mounts = []
+for mount in dc.get('mounts', []):
+    parts = mount.split(',')
+    m = dict(part.split('=', 1) for part in parts if '=' in part)
+    target = m.get('target') or m.get('dst') or ''
+    if target == '/etc/opencode':
+        overlay_mounts.append((parts, m))
+check(len(overlay_mounts) == 1,
+      'devcontainer.json must mount the host overlay at /etc/opencode once')
+if overlay_mounts:
+    parts, m = overlay_mounts[0]
+    check((m.get('src') or m.get('source')) == '${localEnv:HOME}/.devcontainer/opencode',
+          'host overlay mount must use the host config directory')
+    check(m.get('type') == 'bind', 'host overlay mount must be a bind mount')
+    check('ro' in parts, 'host overlay mount must be read-only')
+    check('bind-create-src' not in parts,
+          'host overlay mount must not use bind-create-src')
+
+host_init = repo / '.devcontainer' / 'host-init.sh'
+check(host_init.is_file(), 'host-init.sh missing')
+example_dir = repo / '.devcontainer' / 'examples' / 'opencode'
+example_config = example_dir / 'opencode.json'
+example_agent = example_dir / 'agents' / 'research.md'
+check(example_config.is_file(), 'host overlay example opencode.json missing')
+check(example_agent.is_file(), 'host overlay example research.md missing')
+if example_config.is_file():
+    example_text = example_config.read_text()
+    for server in ('parallel-search', 'brave-search-mcp-server'):
+        check(f'"{server}"' in example_text,
+              f'host overlay example must define {server}')
+if example_agent.is_file():
+    check('description:' in example_agent.read_text(),
+          'host overlay example research override must define a description')
 
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
@@ -638,6 +706,11 @@ check('specify' not in dockerfile.lower(), 'Dockerfile must not install Spec Kit
 check('spec-kit' not in dockerfile.lower(), 'Dockerfile must not mention Spec Kit')
 
 post = post_path.read_text()
+check('# --- opencode host secrets ---' in post,
+      'post-create.sh missing opencode host secrets marker')
+check('{file:' in post, 'post-create.sh must validate {file:...} host secrets')
+check('done < <(' in post,
+      'post-create.sh secret validation must use process substitution')
 check('vscode' not in post.lower(), 'post-create.sh still references vscode')
 check('YQ_VERSION' not in post, 'post-create.sh should not reinstall yq')
 check('export $(' not in post, 'post-create.sh uses unsafe export $(...)')
@@ -974,6 +1047,8 @@ print('PASS: agent roster')
 PY
   bash -n "$REPO/.devcontainer/post-create.sh"
   echo 'PASS: post-create.sh syntax'
+  bash -n "$REPO/.devcontainer/host-init.sh"
+  echo 'PASS: host-init.sh syntax'
   bash -n "$REPO/.devcontainer/bin/gh-app"
   python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
     "$REPO/.devcontainer/bin/gh-app-token"
@@ -1238,6 +1313,33 @@ PY
 then
   bad "control-plane agents"
 fi
+if [ -f "$HOME/.agents.json" ]; then
+  if python3 - "$HOME/.agents.json" <<'PY'
+import json, sys
+agents = {a['id']: a for a in json.load(open(sys.argv[1]))}
+description = agents.get('research', {}).get('description', '')
+assert description == 'Host test research override', description
+PY
+  then
+    pass "host overlay: research agent override"
+  else
+    bad "host overlay: research agent override"
+  fi
+fi
+if opencode mcp list >"$HOME/.mcp-list.txt" 2>&1; then
+  check "host overlay: probe-disabled listed" grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"
+  if [ -f /etc/opencode/opencode.json ]; then
+    for server in parallel-search brave-search-mcp-server; do
+      if grep -qF "\"$server\"" /etc/opencode/opencode.json; then
+        check "host overlay: $server listed" grep -qF "$server" "$HOME/.mcp-list.txt"
+      fi
+    done
+  fi
+else
+  bad "host overlay: mcp list failed"
+fi
+check "host overlay: /etc/opencode read-only" bash -c \
+  'findmnt -no OPTIONS /etc/opencode 2>/dev/null | tr "," "\n" | grep -qx ro'
 
 docker_ok=0
 for _ in $(seq 1 60); do

@@ -87,6 +87,29 @@ done
 # parent directories too so tools can create new files under them.
 sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees
 
+# --- opencode host secrets ---
+# The host overlay references secrets as {file:/etc/opencode/...}. Validate
+# those references before OpenCode starts; never print the file contents.
+while IFS= read -r secret; do
+  if [ ! -f "$secret" ]; then
+    echo "Missing host secret: $secret" >&2
+    exit 1
+  fi
+  if [ ! -r "$secret" ]; then
+    echo "Unreadable host secret: $secret" >&2
+    exit 1
+  fi
+  if [ ! -s "$secret" ]; then
+    echo "Empty host secret: $secret" >&2
+    exit 1
+  fi
+done < <(
+  find /etc/opencode -type f \( -name opencode.json -o -name opencode.jsonc \) -print0 2>/dev/null |
+    xargs -0 -r grep -hoE '\{file:/etc/opencode/[^}]+\}' 2>/dev/null |
+    sed -e 's/^{file://' -e 's/}$//' |
+    sort -u
+)
+
 # --- opencode control plane ---
 OC_SRC="/workspace/.opencode"
 if [ -d "$OC_SRC" ]; then

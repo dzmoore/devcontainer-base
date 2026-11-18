@@ -1,0 +1,29 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "parallel-search": {
+        "type": "remote",
+        "url": "https://search.parallel.ai/mcp",
+        "codemode": false
+      },
+      "brave-search-mcp-server": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@brave/brave-search-mcp-server",
+          "--transport",
+          "stdio"
+        ],
+        "environment": {
+          "BRAVE_API_KEY": "{file:/etc/opencode/secrets/brave_api_key}"
+        },
+        "codemode": false,
+        "timeout": {
+          "startup": 60000
+        }
+      }
+    }
+  }
+}

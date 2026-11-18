@@ -154,12 +154,14 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `.devcontainer/Dockerfile` | Debian base, non-root user, locale, timezone default, and pinned CLI tools |
 | `.devcontainer/devcontainer.json` | Features, mounts, environment, and lifecycle hooks |
 | `.devcontainer/devcontainer-lock.json` | Resolved Dev Container Feature versions |
-| `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, env loading, ownership repair, shell hooks, helper symlinks, Helm login |
+| `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, host secret validation, env loading, ownership repair, shell hooks, helper symlinks, Helm login |
+| `.devcontainer/host-init.sh` | Host-side init: create the overlay directories, secure modes, and ignore `repos/` |
+| `.devcontainer/examples/opencode/` | Example host MCP configuration and `research` agent override |
 | `.devcontainer/bin/gh-app-token` | GitHub App installation token CLI: token, JSON, check, exec, and Git credential modes |
 | `.devcontainer/bin/gh-app` | Wrapper that runs `gh` with a freshly minted installation token |
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
-| `opencode.jsonc` | OpenCode project config; enables the Superpowers plugin and configures the Parallel Search and Brave Search MCP servers |
+| `opencode.jsonc` | OpenCode project config; minimal and defines no MCP servers |
 | `.opencode/agents/research.md` | Research subagent definition and write/network permissions |
 | `.opencode/skills/run-research/` | Research orchestration skill and report template |
 | `.opencode/agents/copy-writer.md` | Copy writer subagent definition, skill routing, and prose and diagram permissions |
@@ -239,13 +241,59 @@ In VS Code, `${localEnv:...}` is resolved from the environment of the process th
 The config keeps the writable Kubernetes config inside the container and leaves OpenCode's project settings in the workspace:
 
 - `KUBECONFIG=/home/developer/.kube/config` — the container-local file lives in the `kubeconfig` volume and is where kind and kubectl write new contexts. It is intentionally the only default path: client-go locks every file in `KUBECONFIG`, and a workspace path on macOS VirtioFS can break `kind`. To use a project kubeconfig at `.kube/config`, merge or copy it manually; see [kind fails with `config.lock: permission denied`](#kind-fails-with-configlock-permission-denied).
-- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository uses it to enable the [Superpowers](https://github.com/obra/superpowers) plugin; add project-specific OpenCode settings to the same file.
+- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository keeps it minimal: it defines no MCP servers. The Superpowers plugin is loaded by `.opencode/opencode.global.json`; add project-specific OpenCode settings to the same file.
 - `STARSHIP_CONFIG=/workspace/.devcontainer/starship.toml` — the prompt config shipped with this base.
 
 Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your project uses different paths. The configuration also assumes the workspace is mounted at `/workspace`; if you change `workspaceFolder`, update the `/workspace` paths in `containerEnv`, `remoteEnv`, and the `.bashrc` hook in `post-create.sh`.
 
 > [!WARNING]
 > Kubeconfig files usually contain credentials. Do not commit `.kube/config` unless it is safe to share.
+
+### Host MCP and agent overrides
+
+All MCP servers come from a host-owned overlay mounted read-only at
+`/etc/opencode`. The project `opencode.jsonc` defines no MCP servers. The
+`initializeCommand` hook runs `bash .devcontainer/host-init.sh` before the
+container starts. The script creates `~/.devcontainer/opencode/` with `secrets/`,
+`agents/`, and `skills/` subdirectories, sets mode `700` on the overlay and
+`secrets/`, and never copies the examples or overwrites a file.
+
+Create the overlay and the secret files on the host:
+
+```bash
+mkdir -p ~/.devcontainer/opencode/secrets
+chmod 700 ~/.devcontainer/opencode ~/.devcontainer/opencode/secrets
+printf '%s\n' "$BRAVE_API_KEY" > ~/.devcontainer/opencode/secrets/brave_api_key
+chmod 600 ~/.devcontainer/opencode/secrets/brave_api_key
+```
+
+The canonical example is `.devcontainer/examples/opencode/opencode.json`. It
+defines `parallel-search` and `brave-search-mcp-server`; the Brave server reads
+`BRAVE_API_KEY` from `{file:/etc/opencode/secrets/brave_api_key}`. Copy it to
+`~/.devcontainer/opencode/opencode.json` and edit it for your host; do not add
+MCP servers to a repository. The example agent override is
+`.devcontainer/examples/opencode/agents/research.md`; copy it to
+`~/.devcontainer/opencode/agents/research.md` to replace the research body while
+inheriting the model and permissions.
+
+`post-create.sh` validates every `{file:/etc/opencode/...}` reference in the
+overlay before OpenCode starts. It fails with the exact path when a referenced
+file is missing, unreadable, or empty. Do not print or log secret values.
+
+> [!WARNING]
+> The overlay is mounted read-only, which protects the host copy from accidental
+> modification, not from disclosure. Any process running as `developer` in the
+> container can read the overlay, and the container is privileged for
+> Docker-in-Docker. Host configuration is trusted and can weaken project policy,
+> so review it like code. A repository without the host overlay has no MCP
+> servers, including no research MCP servers.
+
+Docs-only agents such as `copy-writer` must deny every host search or
+write-capable MCP server. The base agent denies the two known servers,
+`parallel-search_*` and `brave-search-mcp-server_*`. If the host adds another
+such server, append a deny rule to the host copy at
+`~/.devcontainer/opencode/agents/copy-writer.md`; permission rules append to the
+base rules.
 
 ### GitHub App tokens
 
@@ -310,7 +358,7 @@ Editing `.env` in a live interactive shell leaves the old exported values in tha
 
 ### Research subagent
 
-The project config also defines a `research` subagent and a `run-research` skill for evidence-backed web research. The subagent uses the Parallel Search and Brave Search MCP servers configured in `opencode.jsonc` as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
+The project config also defines a `research` subagent and a `run-research` skill for evidence-backed web research. Parallel Search and Brave Search are configured in `~/.devcontainer/opencode/opencode.json` and mounted read-only at `/etc/opencode`; the project `opencode.jsonc` defines no MCP servers. The subagent uses those host servers as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
 
 Invoke the skill with a research question:
 
@@ -334,7 +382,7 @@ research/<YYYY-MM-DD>-<slug>/
 
 `research/` is gitignored; do not commit reports or evidence notes. The `research` subagent can write only under `research/**` and cannot use shell or Code Mode, launch subagents, or ask the user.
 
-`BRAVE_API_KEY` must be set before OpenCode starts. If it is missing or either MCP server fails, the research agents continue with the other provider and record the degraded mode. If both MCPs are unavailable, the run marks the affected claims `unverified` rather than falling back to built-in search. Amazon detail pages and Reddit may block fetching; the report marks those claims `unverified` rather than inventing them.
+`BRAVE_API_KEY` must be set before OpenCode starts. If it is missing or either host MCP server fails, the research agents continue with the other provider and record the degraded mode. A repository without the host overlay has no research MCP servers at all. If both MCPs are unavailable, the run marks the affected claims `unverified` rather than falling back to built-in search. Amazon detail pages and Reddit may block fetching; the report marks those claims `unverified` rather than inventing them.
 
 ### Copy writer subagent
 
