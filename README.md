@@ -119,14 +119,15 @@ rm -rf /tmp/devcontainer-base
 If the project already has a `.devcontainer/` or `.opencode/`, merge the files instead of overwriting them. Then update the `"name"` in `devcontainer.json` if you like, and reopen the project in the container. The rest of the configuration is self-contained.
 
 > [!TIP]
-> If you use [`degit`](https://github.com/Rich-Harris/degit), you can copy just the configuration with `npx degit dzmoore/devcontainer-base/.devcontainer .devcontainer`.
+> If you use [`degit`](https://github.com/Rich-Harris/degit), copy both configuration directories: `npx degit dzmoore/devcontainer-base/.devcontainer .devcontainer` and `npx degit dzmoore/devcontainer-base/.opencode .opencode`.
 
 ### Optional: host secrets
 
-Two read-only bind mounts make host-side secrets available inside the container:
+Three read-only bind mounts make host-side configuration and secrets available inside the container:
 
 - `~/.devcontainer/github/` provides GitHub credentials. `.env` can hold `GITHUB_TOKEN` for `gh` and the `post-create.sh` Helm `ghcr.io` login, plus the GitHub App variables. `app.pem` holds the App private key.
 - `~/.devcontainer/brave/.env` provides `BRAVE_API_KEY` for shell tools that read it. The Brave MCP server does not read this file; it reads `~/.devcontainer/opencode/secrets/brave_api_key` through `{file:/etc/opencode/secrets/brave_api_key}`.
+- `~/.devcontainer/opencode/` provides the host MCP and agent overlay mounted at `/etc/opencode`; see [Host MCP and agent overrides](#host-mcp-and-agent-overrides).
 
 Create the files on the host before the first launch:
 
@@ -168,7 +169,7 @@ repo list
 - `repo worktree <name> <branch>` creates `/workspace/repos/.worktrees/<owner>/<repo>/<name>`.
 - `repo list` prints each clone, its branch, and whether it is dirty.
 
-`repo` uses the GitHub App helper when the `GITHUB_APP_*` variables are present in the environment or `~/.dc/github/.env`: it runs `gh-app-token check`, then uses `gh-app` for `gh` commands, including `gh repo clone` and `gh pr checkout`, and the `gh-app-token git-credential` helper for network `fetch`. If the App is configured but the check fails, the command prints the error and stops instead of silently downgrading. Without App variables it sources `~/.dc/github/.env` when `GITHUB_TOKEN` is unset, exports `GH_TOKEN`, and uses plain `gh`/`git`. Tokens are never written into a remote URL.
+`repo` uses the GitHub App helper when the `GITHUB_APP_*` variables are present in the environment or the env file. The repo helper reads `GITHUB_APP_ENV_FILE` first, then `GITHUB_ENV_FILE`, then `~/.dc/github/.env`, and passes the same file to `gh-app-token check`. `gh-app` performs the clone (`gh repo clone`) and `gh pr checkout`; `gh-app-token git-credential` authenticates network `fetch`. If the App is configured but the check fails, the command prints the error and stops instead of silently downgrading. Without App variables it sources the same env file when `GITHUB_TOKEN` is unset, exports `GH_TOKEN`, and uses plain `gh`/`git`. Tokens are never written into a remote URL.
 
 #### Migrating from the old `worktrees` volume
 
@@ -316,6 +317,11 @@ agents are subagents:
 | `validator` | Independent test rerun and acceptance review with a PASS or FAIL verdict |
 | `security-reviewer` | Threat model and security review of the branch and host configuration |
 
+Read-only worker permissions are a guardrail, not a sandbox. They deny writes,
+shell, web, external directories, and session or worktree tools where the role
+does not need them, but a trusted host overlay or a cloned repository can still
+change policy.
+
 The orchestrator delegates in this order:
 
 1. Intake: restate the request and identify the target repository.
@@ -384,8 +390,16 @@ but their links, commands, and claims must still be checked.
 ### Host MCP and agent overrides
 
 All MCP servers come from a host-owned overlay mounted read-only at
-`/etc/opencode`. The project `opencode.jsonc` defines no MCP servers. The
-`initializeCommand` hook runs `bash .devcontainer/host-init.sh` before the
+`/etc/opencode`. The project `opencode.jsonc` defines no MCP servers.
+Host-only MCP is enforced by policy, not just convention: the global
+control-plane config denies `mcp.use *` and `plugin.use *`, allows only the
+local Superpowers plugin, and the host overlay allows its own named servers.
+A clone can still add `opencode.json` or `.opencode/` agents and skills.
+Project MCP servers and plugins are blocked by that policy, but clone agent
+and skill definitions are trusted input: a cloned repository can shadow the
+control-plane agents or skills, and `repo clone` warns when it finds them.
+For an untrusted clone, pin the control-plane agents in the host overlay.
+The `initializeCommand` hook runs `bash .devcontainer/host-init.sh` before the
 container starts. The script creates `~/.devcontainer/opencode/` with `secrets/`,
 `agents/`, and `skills/` subdirectories, sets mode `700` on the overlay and
 `secrets/`, and never copies the examples or overwrites a file.
@@ -401,9 +415,11 @@ chmod 600 ~/.devcontainer/opencode/secrets/brave_api_key
 
 The canonical example is `.devcontainer/examples/opencode/opencode.json`. It
 defines `parallel-search` and `brave-search-mcp-server`; the Brave server reads
-`BRAVE_API_KEY` from `{file:/etc/opencode/secrets/brave_api_key}`. Copy it to
-`~/.devcontainer/opencode/opencode.json` and edit it for your host; do not add
-MCP servers to a repository. The example agent override is
+`BRAVE_API_KEY` from `{file:/etc/opencode/secrets/brave_api_key}` and pins
+`@brave/brave-search-mcp-server@2.1.5`. Hosts should pin and review every MCP
+package they add; an unpinned `npx` package can change between starts. Copy the
+example to `~/.devcontainer/opencode/opencode.json` and edit it for your host;
+do not add MCP servers to a repository. The example agent override is
 `.devcontainer/examples/opencode/agents/research.md`; copy it to
 `~/.devcontainer/opencode/agents/research.md` to replace the research body while
 inheriting the model and permissions.
@@ -552,6 +568,11 @@ can run a narrow set of read-only `git` and `gh` commands, plus
 `scripts/render-excalidraw.sh` to render a diagram PNG. It cannot use the web,
 launch subagents, or edit code and configuration.
 
+OpenCode's path permissions do not resolve symlink targets. The orchestrator
+resolves a delegated prose path with `readlink -f` and rejects symlinks or paths
+outside the repository before dispatching `copy-writer`; clones are trusted for
+prose paths.
+
 #### Vendored writing skills
 
 | Skill | Source | Purpose |
@@ -622,7 +643,7 @@ A few choices are intentional and worth knowing before changing the setup:
 - Helm defaults to `v4.3.1`. To use Helm 3, change `HELM_VERSION` to `v3.22.1` and update the matching per-architecture digest ARGs; Helm 3 security support ends on 2027-02-10.
 - Version support is policy-specific: kubectl `v1.37.2` supports Kubernetes 1.36–1.38, while Helm 4.3.x supports Kubernetes 1.34–1.37.
 - Minikube is no longer included. `kind` remains the local-cluster option; re-add the feature or install minikube manually if a project needs it.
-- Existing containers retain minikube and the other old feature binaries until they are recreated. `smoke-real` will fail the new minikube-absence assertions on those containers.
+- Existing containers retain minikube and the other old feature binaries until they are recreated. `smoke-real` will fail the new minikube-absence assertions on those containers, and it expects `/etc/opencode` to be mounted and read-only because the runtime smoke asserts the overlay policy.
 - The feature's `gnupg2`/`dirmngr` installs and its conditional `jq` install are intentionally gone. Add them explicitly if a project needs GPG verification or jq.
 - `KUBECONFIG` points only at the container-local `/home/developer/.kube/config`. Kubernetes client-go locks every file listed in `KUBECONFIG`; on macOS VirtioFS bind mounts a lock file can be created with mode `000`, which breaks `kind`. The `kubeconfig` volume keeps this directory on the Docker volume filesystem and preserves contexts across rebuilds. `post-create.sh` creates the file, sets it to `0600`, and removes stale lock files. Do not add `/workspace/.kube/config` to the default `KUBECONFIG`; merge a project config manually instead.
 - The `developer` username is part of the test contract. If you change it, update the Dockerfile default, `remoteUser`, mounts, `remoteEnv`, and smoke tests together.

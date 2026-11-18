@@ -18,6 +18,33 @@ permissions:
   - action: skill
     resource: rubber-duck
     effect: allow
+  - action: shell
+    resource: "*"
+    effect: deny
+  - action: execute
+    resource: "*"
+    effect: deny
+  - action: webfetch
+    resource: "*"
+    effect: deny
+  - action: websearch
+    resource: "*"
+    effect: deny
+  - action: external_directory
+    resource: "*"
+    effect: deny
+  - action: "opencode_*"
+    resource: "*"
+    effect: deny
+  - action: "opencode.*"
+    resource: "*"
+    effect: deny
+  - action: "worktree_*"
+    resource: "*"
+    effect: deny
+  - action: "session_*"
+    resource: "*"
+    effect: deny
 ---
 
 # Rubber-duck worker

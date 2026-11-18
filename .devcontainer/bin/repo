@@ -4,13 +4,15 @@
 set -euo pipefail
 
 ROOT="${REPO_ROOT:-/workspace/repos}"
-GITHUB_ENV_FILE="${GITHUB_ENV_FILE:-$HOME/.dc/github/.env}"
+GITHUB_ENV_FILE="${GITHUB_APP_ENV_FILE:-${GITHUB_ENV_FILE:-$HOME/.dc/github/.env}}"
 GITHUB_SERVER="${GITHUB_SERVER_URL:-https://github.com}"
 GITHUB_SERVER="${GITHUB_SERVER%/}"
-BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GH_APP_TOKEN="$BIN_DIR/gh-app-token"
-GH_APP="$BIN_DIR/gh-app"
+BIN_DIR="$(cd "$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)"
+GH_APP_TOKEN="$(readlink -f -- "$BIN_DIR/gh-app-token")"
+GH_APP="$(readlink -f -- "$BIN_DIR/gh-app")"
 AUTH_MODE="plain"
+ROOT_REAL=""
+COMPONENT_RE='^[A-Za-z0-9][A-Za-z0-9_.-]*$'
 
 usage() {
   cat <<'EOF'
@@ -33,6 +35,71 @@ EOF
 }
 
 die() { printf 'repo: %s\n' "$*" >&2; exit 1; }
+
+validate_component() {
+  local value="$1" label="$2"
+  case "$value" in
+    ''|-*|.|..) die "invalid $label '$value'" ;;
+  esac
+  [[ "$value" =~ $COMPONENT_RE ]] || die "invalid $label '$value'"
+}
+
+validate_slug() {
+  local slug="$1" owner name
+  case "$slug" in
+    */*/*) die "invalid repository '$slug'; expected <owner>/<repo>" ;;
+    */*) ;;
+    *) die "invalid repository '$slug'; expected <owner>/<repo>" ;;
+  esac
+  owner="${slug%%/*}"
+  name="${slug#*/}"
+  validate_component "$owner" "repository owner"
+  validate_component "$name" "repository name"
+}
+
+ensure_root() {
+  mkdir -p "$ROOT"
+  [ ! -L "$ROOT" ] || die "clone root must not be a symlink: $ROOT"
+  ROOT_REAL="$(realpath -m -- "$ROOT")"
+  local sub resolved
+  for sub in local .worktrees; do
+    [ ! -L "$ROOT/$sub" ] || die "clone path must not be a symlink: $ROOT/$sub"
+    [ ! -e "$ROOT/$sub" ] || {
+      resolved="$(realpath -m -- "$ROOT/$sub")"
+      case "$resolved" in
+        "$ROOT_REAL"|"$ROOT_REAL"/*) ;;
+        *) die "clone path escapes the clone root: $ROOT/$sub -> $resolved" ;;
+      esac
+    }
+  done
+}
+
+ensure_under() {
+  local path="$1" base="$2" label="$3"
+  local resolved_base resolved
+  resolved_base="$(realpath -m -- "$base")"
+  resolved="$(realpath -m -- "$path")"
+  case "$resolved" in
+    "$resolved_base"|"$resolved_base"/*) ;;
+    *) die "$label escapes $base: $path" ;;
+  esac
+}
+
+warn_clone_config() {
+  local dest="$1" file
+  for file in "$dest/opencode.json" "$dest/opencode.jsonc"; do
+    if [ -f "$file" ] && grep -Eq '"(mcp|plugins|agents|skills)"' "$file"; then
+      printf 'repo: warning: %s configures project MCP, plugins, agents, or skills; project MCP and plugins are blocked, and clone agent/skill definitions are trusted input\n' "$file" >&2
+    fi
+  done
+  if [ -d "$dest/.opencode" ]; then
+    if find "$dest/.opencode" -maxdepth 3 \
+        \( -iname '*mcp*' -o -iname '*plugin*' -o -iname 'agent' -o -iname 'agents' \
+        -o -iname '*skill*' \) -print -quit 2>/dev/null | grep -q .; then
+      printf 'repo: warning: %s/.opencode defines agents, skills, MCP, or plugins; project MCP and plugins are blocked, and clone agent/skill definitions are trusted input\n' "$dest" >&2
+    fi
+  fi
+}
 
 app_configured() {
   local var
@@ -61,7 +128,7 @@ select_auth() {
     return 0
   fi
   if app_configured; then
-    if ! "$GH_APP_TOKEN" check >/dev/null; then
+    if ! GITHUB_APP_ENV_FILE="$GITHUB_ENV_FILE" "$GH_APP_TOKEN" check >/dev/null; then
       die "GitHub App authentication check failed; refusing to fall back to a PAT"
     fi
     AUTH_MODE="app"
@@ -102,21 +169,19 @@ fetch_remote() {
   fi
 }
 
-validate_slug() {
-  [[ "$1" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
-    || die "invalid repository '$1'; expected <owner>/<repo>"
-}
-
 clone_slug() {
   local slug="$1" upstream="${2:-}" owner name dest
   validate_slug "$slug"
+  ensure_root
   select_auth
   owner="${slug%%/*}"
   name="${slug#*/}"
   dest="$ROOT/$owner/$name"
+  ensure_under "$dest" "$ROOT" "clone destination"
   [ ! -e "$dest" ] || die "destination already exists: $dest"
   mkdir -p "$ROOT/$owner"
   gh_run repo clone "$slug" "$dest" >&2
+  warn_clone_config "$dest"
   if [ -n "$upstream" ]; then
     validate_slug "$upstream"
     git -C "$dest" remote add upstream "$(remote_url "$upstream")"
@@ -127,13 +192,20 @@ clone_slug() {
 
 clone_local() {
   local source="$1" upstream="${2:-}" base dest
+  case "/$source/" in
+    */../*) die "clone source must not contain '..': $source" ;;
+  esac
   base="$(basename "${source%/}")"
   base="${base%.git}"
   [ -n "$base" ] || die "cannot derive a repository name from '$source'"
+  validate_component "$base" "repository name"
+  ensure_root
   dest="$ROOT/local/$base"
+  ensure_under "$dest" "$ROOT" "clone destination"
   [ ! -e "$dest" ] || die "destination already exists: $dest"
   mkdir -p "$(dirname "$dest")"
   git clone "$source" "$dest"
+  warn_clone_config "$dest"
   if [ -n "$upstream" ]; then
     validate_slug "$upstream"
     select_auth
@@ -187,12 +259,13 @@ cmd_fork() {
   [ "$#" -eq 2 ] || die "usage: repo fork <upstream-owner>/<repo> <fork-owner>"
   local upstream="$1" fork_owner="$2" name
   validate_slug "$upstream"
+  validate_component "$fork_owner" "fork owner"
   name="${upstream#*/}"
   clone_slug "$fork_owner/$name" "$upstream"
 }
 
 cmd_list() {
-  mkdir -p "$ROOT"
+  ensure_root
   local found=0 gitdir dir branch state rel
   while IFS= read -r -d '' gitdir; do
     dir="${gitdir%/.git}"
@@ -235,6 +308,9 @@ cmd_switch() {
     esac
   done
   [ -n "$branch" ] || die "usage: repo switch <branch> [--create]"
+  case "$branch" in
+    -*) die "invalid branch '$branch'" ;;
+  esac
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     || die "switch must run inside a clone"
   if [ "$create" -eq 1 ]; then
@@ -246,6 +322,7 @@ cmd_switch() {
 
 cmd_pr() {
   [ "$#" -eq 1 ] || die "usage: repo pr <number>"
+  [[ "$1" =~ ^[0-9]+$ ]] || die "invalid pull request number '$1'"
   select_auth
   gh_run pr checkout "$1"
 }
@@ -294,12 +371,19 @@ repo_identity() {
 cmd_worktree() {
   [ "$#" -eq 2 ] || die "usage: repo worktree <name> <branch>"
   local name="$1" branch="$2" identity owner repo dest
+  validate_component "$name" "worktree name"
+  case "$branch" in
+    ''|-*) die "invalid branch '$branch'" ;;
+  esac
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     || die "worktree must run inside a clone"
   identity="$(repo_identity)" || die "cannot determine the clone identity"
+  validate_slug "$identity"
   owner="${identity%%/*}"
   repo="${identity#*/}"
+  ensure_root
   dest="$ROOT/.worktrees/$owner/$repo/$name"
+  ensure_under "$dest" "$ROOT/.worktrees" "worktree destination"
   [ ! -e "$dest" ] || die "worktree already exists: $dest"
   mkdir -p "$(dirname "$dest")"
   if git show-ref --verify --quiet "refs/heads/$branch"; then

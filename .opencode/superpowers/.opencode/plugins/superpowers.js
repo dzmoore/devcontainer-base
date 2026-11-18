@@ -78,7 +78,7 @@ const extractAndStripFrontmatter = (content) => {
 export const V1_MAPPING = `**Tool Mapping for OpenCode:**
 When skills request actions, substitute OpenCode equivalents:
 - Create or update todos → \`todowrite\`
-- \`Subagent (general-purpose):\` → \`task\` with \`subagent_type: "general"\`
+- \`Subagent (general-purpose):\` → \`task\` with \`subagent_type: "<named control-plane agent>"\`; use the agent named in AGENTS.md or the orchestration mapping, and never dispatch \`general\`
 - Invoke a skill → OpenCode's native \`skill\` tool. Skill ids are bare names, so drop the \`superpowers:\` prefix skills use when they name each other (\`superpowers:brainstorming\` → \`skill\` with \`name: "brainstorming"\`)
 - Read files → \`read\`
 - Create, edit, or delete files → \`apply_patch\`
@@ -96,7 +96,7 @@ Use OpenCode's native \`skill\` tool to list and load skills.`;
 export const V2_MAPPING = `**Tool Mapping for OpenCode:**
 When skills request actions, substitute OpenCode equivalents:
 - Create or update todos → OpenCode v2 has no todo tool; track the plan in a markdown file (or the harness's plan facility) instead
-- \`Subagent (general-purpose):\` → \`subagent\` with \`agent: "general"\` (give it \`description\` and \`prompt\`, optionally \`background\`; pass \`sessionID\` to continue a previous subagent)
+- \`Subagent (general-purpose):\` → \`subagent\` with \`agent: "<named control-plane agent>"\` (use the agent named in AGENTS.md or the orchestration mapping, never dispatch \`general\`; give it \`description\` and \`prompt\`, optionally \`background\`; pass \`sessionID\` to continue a previous subagent)
 - Invoke a skill → OpenCode's native \`skill\` tool. Skill ids are bare names, so drop the \`superpowers:\` prefix skills use when they name each other (\`superpowers:brainstorming\` → \`skill\` with \`id: "brainstorming"\`)
 - Read files → \`read\`
 - Create, edit, or delete files → use \`patch\` with \`patchText\` when available; otherwise use \`write\` to create or overwrite files, \`edit\` for targeted changes, and \`shell\` for deletion

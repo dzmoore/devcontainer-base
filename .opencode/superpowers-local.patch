@@ -1,16 +1,68 @@
+diff --git a/.opencode/plugins/superpowers.js b/.opencode/plugins/superpowers.js
+index d39c1ec..4e130bb 100644
+--- a/.opencode/plugins/superpowers.js
++++ b/.opencode/plugins/superpowers.js
+@@ -78,7 +78,7 @@ const extractAndStripFrontmatter = (content) => {
+ export const V1_MAPPING = `**Tool Mapping for OpenCode:**
+ When skills request actions, substitute OpenCode equivalents:
+ - Create or update todos → \`todowrite\`
+-- \`Subagent (general-purpose):\` → \`task\` with \`subagent_type: "general"\`
++- \`Subagent (general-purpose):\` → \`task\` with \`subagent_type: "<named control-plane agent>"\`; use the agent named in AGENTS.md or the orchestration mapping, and never dispatch \`general\`
+ - Invoke a skill → OpenCode's native \`skill\` tool. Skill ids are bare names, so drop the \`superpowers:\` prefix skills use when they name each other (\`superpowers:brainstorming\` → \`skill\` with \`name: "brainstorming"\`)
+ - Read files → \`read\`
+ - Create, edit, or delete files → \`apply_patch\`
+@@ -96,7 +96,7 @@ Use OpenCode's native \`skill\` tool to list and load skills.`;
+ export const V2_MAPPING = `**Tool Mapping for OpenCode:**
+ When skills request actions, substitute OpenCode equivalents:
+ - Create or update todos → OpenCode v2 has no todo tool; track the plan in a markdown file (or the harness's plan facility) instead
+-- \`Subagent (general-purpose):\` → \`subagent\` with \`agent: "general"\` (give it \`description\` and \`prompt\`, optionally \`background\`; pass \`sessionID\` to continue a previous subagent)
++- \`Subagent (general-purpose):\` → \`subagent\` with \`agent: "<named control-plane agent>"\` (use the agent named in AGENTS.md or the orchestration mapping, never dispatch \`general\`; give it \`description\` and \`prompt\`, optionally \`background\`; pass \`sessionID\` to continue a previous subagent)
+ - Invoke a skill → OpenCode's native \`skill\` tool. Skill ids are bare names, so drop the \`superpowers:\` prefix skills use when they name each other (\`superpowers:brainstorming\` → \`skill\` with \`id: "brainstorming"\`)
+ - Read files → \`read\`
+ - Create, edit, or delete files → use \`patch\` with \`patchText\` when available; otherwise use \`write\` to create or overwrite files, \`edit\` for targeted changes, and \`shell\` for deletion
+diff --git a/skills/dispatching-parallel-agents/SKILL.md b/skills/dispatching-parallel-agents/SKILL.md
+index 3fa091b..02e409e 100644
+--- a/skills/dispatching-parallel-agents/SKILL.md
++++ b/skills/dispatching-parallel-agents/SKILL.md
+@@ -68,9 +68,9 @@ Each agent gets:
+ Issue all three subagent dispatches in the same response — they run in parallel:
+
+ ```text
+-Subagent (general-purpose): "Fix agent-tool-abort.test.ts failures"
+-Subagent (general-purpose): "Fix batch-completion-behavior.test.ts failures"
+-Subagent (general-purpose): "Fix tool-approval-race-conditions.test.ts failures"
++implementer: "Fix agent-tool-abort.test.ts failures"
++implementer: "Fix batch-completion-behavior.test.ts failures"
++implementer: "Fix tool-approval-race-conditions.test.ts failures"
+ # All three run concurrently.
+ ```
+
+diff --git a/skills/requesting-code-review/SKILL.md b/skills/requesting-code-review/SKILL.md
+index 68d338a..f253abd 100644
+--- a/skills/requesting-code-review/SKILL.md
++++ b/skills/requesting-code-review/SKILL.md
+@@ -31,7 +31,7 @@ HEAD_SHA=$(git rev-parse HEAD)
+
+ **2. Dispatch code reviewer subagent:**
+
+-Dispatch a `general-purpose` subagent, filling the template at [code-reviewer.md](code-reviewer.md)
++Dispatch the `validator` control-plane agent, filling the template at [code-reviewer.md](code-reviewer.md)
+
+ **Placeholders:**
+ - `{DESCRIPTION}` - Brief summary of what you built
 diff --git a/skills/requesting-code-review/code-reviewer.md b/skills/requesting-code-review/code-reviewer.md
 index 6d358b5..4731fab 100644
 --- a/skills/requesting-code-review/code-reviewer.md
 +++ b/skills/requesting-code-review/code-reviewer.md
 @@ -1,11 +1,12 @@
  # Code Reviewer Prompt Template
- 
+
 -Use this template when dispatching a code reviewer subagent.
 +Use this template when dispatching a code reviewer subagent. The `validator`
 +agent file owns model selection; do not pass a model at dispatch.
- 
+
  **Purpose:** Review completed work against requirements and code quality standards before it cascades into more work.
- 
+
  ```
 -Subagent (general-purpose):
 +agent: validator
@@ -22,9 +74,9 @@ index 4519578..1b3f644 100644
 --- a/skills/subagent-driven-development/SKILL.md
 +++ b/skills/subagent-driven-development/SKILL.md
 @@ -139,40 +139,14 @@ ledger.
- 
+
  ## Model Selection
- 
+
 -Use the least powerful model that can handle each role to conserve cost and increase speed.
 -
 -**Mechanical implementation tasks** (isolated functions, clear specs, 1-2 files): use a fast, cheap model. Most implementation tasks are mechanical when the plan is well-specified.
@@ -67,20 +119,20 @@ index 4519578..1b3f644 100644
 +Any guidance later in this skill or its references that suggests choosing a
 +different model at dispatch is superseded by this rule: dispatch the named
 +agent, and change the agent file if a different model is required.
- 
+
  ## The Task Loop
- 
+
 diff --git a/skills/subagent-driven-development/implementer-prompt.md b/skills/subagent-driven-development/implementer-prompt.md
 index 5c8ecd6..2362d4f 100644
 --- a/skills/subagent-driven-development/implementer-prompt.md
 +++ b/skills/subagent-driven-development/implementer-prompt.md
 @@ -1,12 +1,11 @@
  # Implementer Subagent Prompt Template
- 
+
 -Use this template when dispatching an implementer subagent.
 +Use this template when dispatching an implementer subagent. The `implementer`
 +agent file owns model selection; do not pass a model at dispatch.
- 
+
  ```
 -Subagent (general-purpose):
 +agent: implementer
@@ -89,29 +141,29 @@ index 5c8ecd6..2362d4f 100644
 -         model silently inherits the session's most expensive one]
    prompt: |
      You are implementing Task N: [task name]
- 
+
 @@ -86,8 +85,7 @@ Subagent (general-purpose):
- 
+
      **How to escalate:** Report back with status BLOCKED or NEEDS_CONTEXT. Describe
      specifically what you're stuck on, what you've tried, and what kind of help you need.
 -    The controller can provide more context, re-dispatch with a more capable model,
 -    or break the task into smaller pieces.
 +    The controller can provide more context or break the task into smaller pieces.
- 
+
      ## Before Reporting Back: Self-Review
- 
+
 diff --git a/skills/subagent-driven-development/re-review-prompt.md b/skills/subagent-driven-development/re-review-prompt.md
 index eb520df..3e0260d 100644
 --- a/skills/subagent-driven-development/re-review-prompt.md
 +++ b/skills/subagent-driven-development/re-review-prompt.md
 @@ -5,13 +5,12 @@ re-reviewer verifies the findings were addressed and checks the fix diff for
  new breakage. It is not a fresh review — the full review already happened.
- 
+
  **Purpose:** Verify each finding from the previous review was addressed, and
 -that the fix itself broke nothing.
 +that the fix itself broke nothing. The `validator` agent file owns model
 +selection; do not pass a model at dispatch.
- 
+
  ```
 -Subagent (general-purpose):
 +agent: validator
@@ -123,7 +175,7 @@ index eb520df..3e0260d 100644
      findings; an implementer has attempted to fix them. Your job is to
 @@ -101,8 +100,6 @@ Subagent (general-purpose):
  ```
- 
+
  **Placeholders:**
 -- `[MODEL]` — REQUIRED: reviewer model per SKILL.md Model Selection; scoped
 -  re-reviews of small fix diffs take a cheap-to-mid tier
@@ -146,7 +198,7 @@ index cf03546..27f9fdc 100644
 -fixed before merge.
 +fixed before merge. To change a model, edit the agent file and the static
 +expectation in the same approved change.
- 
+
  If the final whole-branch review returns findings, dispatch ONE fix subagent
  with the complete findings list — not one fixer per finding.
 diff --git a/skills/subagent-driven-development/references/fix-loop.md b/skills/subagent-driven-development/references/fix-loop.md
@@ -156,7 +208,7 @@ index 34e4a48..0adda78 100644
 @@ -26,12 +26,15 @@ choices. If your harness cannot send another message to a live subagent,
  dispatch a fresh implementer carrying the brief path, the report-file path,
  and the findings — the report file is the persistent memory either way.
- 
+
 -**Rounds 4-5 — dispatch a fresh implementer on a more capable model** (per
 -SKILL.md's Model Selection), with the brief path, the report-file path, the open
 +**Rounds 4-5 — dispatch a fresh `implementer` agent**, the named control-plane
@@ -169,7 +221,7 @@ index 34e4a48..0adda78 100644
 +
 +To change a model, edit the agent file and the static expectation in the same
 +approved change.
- 
+
  **Every round, either way:** the implementer fixes, re-runs the tests
  covering the amended code, appends its fix report to the same report file,
 diff --git a/skills/subagent-driven-development/references/handling-reports.md b/skills/subagent-driven-development/references/handling-reports.md
@@ -178,7 +230,7 @@ index cf91cdc..f1c737f 100644
 +++ b/skills/subagent-driven-development/references/handling-reports.md
 @@ -7,9 +7,12 @@ Part of superpowers:subagent-driven-development.
  **NEEDS_CONTEXT:** The implementer needs information that wasn't provided. Provide the missing context and re-dispatch.
- 
+
  **BLOCKED:** The implementer cannot complete the task. Assess the blocker:
 -1. If it's a context problem, provide more context and re-dispatch with the same model
 -2. If the task requires more reasoning, re-dispatch with a more capable model
@@ -186,7 +238,7 @@ index cf91cdc..f1c737f 100644
 +2. If the task requires more reasoning, re-dispatch the named `implementer` agent with a sharper brief
  3. If the task is too large, break it into smaller pieces
  4. If the plan itself is wrong, rule on the correction, ledger it, and re-dispatch with the ruling carried in the dispatch
- 
+
 -**Never** ignore an escalation or force the same model to retry without changes. If the implementer said it's stuck, something needs to change.
 +To change a model, edit the agent file and the static expectation in the same
 +approved change. **Never** ignore an escalation or force the same agent to
@@ -197,16 +249,16 @@ index 4cf7860..28f345b 100644
 --- a/skills/subagent-driven-development/task-reviewer-prompt.md
 +++ b/skills/subagent-driven-development/task-reviewer-prompt.md
 @@ -2,16 +2,15 @@
- 
+
  Use this template when dispatching a task reviewer subagent. The reviewer
  reads the task's diff once and returns two verdicts: spec compliance and
 -code quality.
 +code quality. The `validator` agent file owns model selection; do not pass
 +a model at dispatch.
- 
+
  **Purpose:** Verify one task's implementation matches its requirements (nothing
  more, nothing less) and is well-built (clean, tested, maintainable)
- 
+
  ```
 -Subagent (general-purpose):
 +agent: validator
@@ -218,7 +270,7 @@ index 4cf7860..28f345b 100644
      requirements, then whether it is well-built. This is a task-scoped gate,
 @@ -188,7 +187,6 @@ Subagent (general-purpose):
  ```
- 
+
  **Placeholders:**
 -- `[MODEL]` — REQUIRED: reviewer model per SKILL.md Model Selection
  - `[BRIEF_FILE]` — REQUIRED: the task brief file (`bash scripts/task-brief PLAN N`,
@@ -229,18 +281,18 @@ index 46838cc..d02bcfe 100644
 --- a/skills/test-driven-development/SKILL.md
 +++ b/skills/test-driven-development/SKILL.md
 @@ -11,6 +11,8 @@ Write the test first. Watch it fail. Write minimal code to pass.
- 
+
  **Core principle:** If you didn't watch the test fail, you don't know if it tests the right thing.
- 
+
 +**Canonical references:** [Kent Beck, "Canonical TDD"](https://newsletter.kentbeck.com/p/canon-tdd), [Martin Fowler, "Test Driven Development"](https://martinfowler.com/bliki/TestDrivenDevelopment.html), and [James Shore, "Red-Green-Refactor"](https://www.jamesshore.com/v2/blog/2005/red-green-refactor).
 +
  **Violating the letter of the rules is violating the spirit of the rules.**
- 
+
  ## When to Use
 @@ -21,7 +23,7 @@ Write the test first. Watch it fail. Write minimal code to pass.
  - Refactoring
  - Behavior changes
- 
+
 -**Exceptions (ask your human partner):**
 +**Exceptions (require explicit user approval; the agent cannot self-approve):**
  - Throwaway prototypes
@@ -249,7 +301,7 @@ index 46838cc..d02bcfe 100644
 @@ -327,4 +329,6 @@ Production code → test exists and failed first
  Otherwise → not TDD
  ```
- 
+
 -No exceptions without your human partner's permission.
 +No exceptions without explicit user approval. The orchestrator or implementer
 +cannot approve its own exception; record the approval, scope, and reason in the

@@ -62,8 +62,8 @@ their links, commands, and claims must still be checked.
 ## Worker rules
 
 - Load your role skill first, before acting.
-- Do not load `using-superpowers`; the plugin already injected its bootstrap
-  into this session.
+- The plugin skips child sessions. Load your role skill and work the brief; do
+  not restart the controller workflow or load `using-superpowers`.
 - Do not ask the user questions. Ask the orchestrator in your report if the
   brief is incomplete.
 - Do not launch subagents.
@@ -73,12 +73,27 @@ their links, commands, and claims must still be checked.
 The orchestrator asks the user only for design approval, destructive actions,
 merge or push approval, and TDD exceptions.
 
+Read-only is a guardrail, not a sandbox. Worker permission rules deny writes,
+shell, web, external directories, and session or worktree tools where the role
+does not need them, but a trusted host overlay or a cloned repository can still
+change policy. Treat a clone's agent and skill files as trusted input.
+
 ## Host MCP servers
 
 All MCP servers come from the host overlay mounted read-only at `/etc/opencode`.
 The project `opencode.jsonc` defines no MCP servers and loads no git-backed
-plugin. Do not add MCP entries to a repository to work around a missing host
-server.
+plugin. Host-only MCP is enforced by policy, not just convention: the global
+control-plane config denies `mcp.use *` and `plugin.use *`, allows only the
+local Superpowers plugin, and the host overlay allows its own named servers.
+Do not add MCP entries to a repository to work around a missing host server;
+the policy blocks them.
+
+A clone may still carry `opencode.json` or `.opencode/` agent and skill
+definitions. Project MCP servers and plugins are blocked, but clone agent and
+skill definitions are trusted input: a cloned repository can shadow the
+control-plane agents or skills. `repo clone` prints a warning when it finds
+such entries. For an untrusted clone, pin the control-plane agents in the host
+overlay instead of relying on the project layer.
 
 When a research MCP server is unavailable, say so and mark the affected claims
 `unverified`. Do not substitute an unapproved search source. Docs-only agents

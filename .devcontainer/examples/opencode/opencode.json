@@ -1,5 +1,9 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "permissions": [
+    { "action": "mcp.use", "resource": "parallel-search", "effect": "allow" },
+    { "action": "mcp.use", "resource": "brave-search-mcp-server", "effect": "allow" }
+  ],
   "mcp": {
     "servers": {
       "parallel-search": {
@@ -12,7 +16,7 @@
         "command": [
           "npx",
           "-y",
-          "@brave/brave-search-mcp-server",
+          "@brave/brave-search-mcp-server@2.1.5",
           "--transport",
           "stdio"
         ],

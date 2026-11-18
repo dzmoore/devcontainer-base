@@ -21,6 +21,42 @@ permissions:
   - action: skill
     resource: code-review
     effect: allow
+  - action: shell
+    resource: "*"
+    effect: allow
+  - action: shell
+    resource: "git push*"
+    effect: deny
+  - action: shell
+    resource: "git reset --hard*"
+    effect: deny
+  - action: shell
+    resource: "rm -rf*"
+    effect: deny
+  - action: execute
+    resource: "*"
+    effect: deny
+  - action: webfetch
+    resource: "*"
+    effect: deny
+  - action: websearch
+    resource: "*"
+    effect: deny
+  - action: external_directory
+    resource: "*"
+    effect: deny
+  - action: "opencode_*"
+    resource: "*"
+    effect: deny
+  - action: "opencode.*"
+    resource: "*"
+    effect: deny
+  - action: "worktree_*"
+    resource: "*"
+    effect: deny
+  - action: "session_*"
+    resource: "*"
+    effect: deny
 ---
 
 # Security reviewer
