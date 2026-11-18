@@ -240,10 +240,47 @@ check('OPENCODE_CONFIG' not in dc.get('remoteEnv', {}),
       'remoteEnv must not set OPENCODE_CONFIG; OpenCode discovers opencode.jsonc')
 opencode_path = repo / 'opencode.jsonc'
 check(opencode_path.is_file(), 'opencode.jsonc missing')
-if opencode_path.is_file():
-    opencode_text = opencode_path.read_text()
-    check('superpowers@git+https://github.com/obra/superpowers.git' in opencode_text,
-          'opencode.jsonc must enable the superpowers plugin')
+
+# --- opencode control plane ---
+global_path = repo / '.opencode' / 'opencode.global.json'
+check(global_path.is_file(), 'opencode.global.json missing')
+if global_path.is_file():
+    g = json.loads(global_path.read_text())
+    check(g.get('default_agent') == 'orchestrator', 'default_agent must be orchestrator')
+    check(g.get('model') == 'opencode-go/deepseek-v4.1-flash', 'default model mismatch')
+    check(g.get('plugins') == ['/workspace/.opencode/superpowers'], 'local plugin path missing')
+    check(g.get('experimental', {}).get('subagent_depth') == 1, 'subagent_depth must be 1')
+    check(g.get('worktree', {}).get('directory') == '/workspace/repos/.worktrees', 'worktree directory mismatch')
+    check(g.get('agents', {}).get('build', {}).get('disabled') is True, 'build must be disabled')
+    check(g.get('agents', {}).get('plan', {}).get('disabled') is True, 'plan must be disabled')
+    check('/workspace/.opencode/AGENTS.md' in g.get('instructions', []), 'AGENTS.md instruction missing')
+
+project = json.loads(opencode_path.read_text()) if opencode_path.is_file() else {}
+check('plugins' not in project, 'opencode.jsonc must not load a plugin')
+check('mcp' not in project, 'opencode.jsonc must not define MCP servers; use the host overlay')
+
+for rel in (
+    '.opencode/superpowers/index.js',
+    '.opencode/superpowers/.opencode/plugins/superpowers.js',
+    '.opencode/superpowers/skills/using-superpowers/SKILL.md',
+    '.opencode/superpowers/LICENSE',
+    '.opencode/superpowers/package.json',
+    '.opencode/superpowers/UPSTREAM.md',
+    '.opencode/superpowers.lock',
+    '.opencode/superpowers-local.patch',
+    'scripts/update-superpowers.sh',
+    '.opencode/AGENTS.md',
+):
+    check((repo / rel).is_file(), f'{rel} missing')
+
+lock_path = repo / '.opencode/superpowers.lock'
+if lock_path.is_file():
+    lock = lock_path.read_text()
+    check('ref=v7.0.2' in lock, 'superpowers.lock must pin v7.0.2')
+    check('commit=c62ffea8267a70de07583e153544d355b6748a56' in lock, 'superpowers.lock commit mismatch')
+check('Superpowers' in (repo / 'NOTICE').read_text(), 'NOTICE must attribute Superpowers')
+check('# --- opencode control plane ---' in (repo / '.devcontainer/post-create.sh').read_text(),
+      'post-create must install the control plane')
 
 # Copy writer agent and vendored writing skills
 opencode_config = repo / 'opencode.jsonc'
@@ -731,6 +768,8 @@ PY
   echo 'PASS: GitHub App helper syntax'
   bash -n "$REPO/scripts/render-excalidraw.sh"
   echo 'PASS: Excalidraw renderer syntax'
+  bash -n "$REPO/scripts/update-superpowers.sh"
+  echo 'PASS: Superpowers update script syntax'
 }
 
 run_app_token() {

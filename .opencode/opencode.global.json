@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "orchestrator",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "plugins": ["/workspace/.opencode/superpowers"],
+  "instructions": ["/workspace/.opencode/AGENTS.md"],
+  "experimental": { "subagent_depth": 1 },
+  "worktree": { "directory": "/workspace/repos/.worktrees" },
+  "agents": {
+    "build": { "disabled": true },
+    "plan": { "disabled": true }
+  }
+}

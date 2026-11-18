@@ -87,6 +87,38 @@ done
 # parent directories too so tools can create new files under them.
 sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees
 
+# --- opencode control plane ---
+OC_SRC="/workspace/.opencode"
+if [ -d "$OC_SRC" ]; then
+  mkdir -p "$HOME/.config/opencode/agents" "$HOME/.config/opencode/skills"
+  if [ ! -e "$HOME/.config/opencode/opencode.json" ] || [ -L "$HOME/.config/opencode/opencode.json" ]; then
+    ln -sfn "$OC_SRC/opencode.global.json" "$HOME/.config/opencode/opencode.json"
+  fi
+  for src in "$OC_SRC"/agents/*.md; do
+    [ -e "$src" ] || continue
+    dest="$HOME/.config/opencode/agents/$(basename "$src")"
+    if [ ! -e "$dest" ] || [ -L "$dest" ]; then
+      ln -sfn "$src" "$dest"
+    fi
+  done
+  for src in "$OC_SRC"/skills/*; do
+    [ -d "$src" ] || continue
+    dest="$HOME/.config/opencode/skills/$(basename "$src")"
+    if [ ! -e "$dest" ] || [ -L "$dest" ]; then
+      ln -sfn "$src" "$dest"
+    fi
+  done
+  # Remove stale links that point into the control plane but whose source is gone.
+  for link in "$HOME/.config/opencode/agents"/* "$HOME/.config/opencode/skills"/*; do
+    [ -L "$link" ] || continue
+    case "$(readlink "$link")" in
+      "$OC_SRC"/*)
+        [ -e "$link" ] || rm -f "$link"
+        ;;
+    esac
+  done
+fi
+
 echo "Installing GitHub App helper commands..."
 for helper in gh-app-token gh-app; do
   src="/workspace/.devcontainer/bin/$helper"

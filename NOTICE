@@ -1,4 +1,15 @@
-This repository includes third-party writing material:
+This repository includes third-party material:
+
+Superpowers
+  Source: https://github.com/obra/superpowers
+  Release: v7.0.2
+  Copyright (c) 2025 Jesse Vincent
+  License: MIT
+  Vendored at tag commit c62ffea8267a70de07583e153544d355b6748a56
+  (commit 22f0b463e7a5e579904dd6211a520321035526f7) under
+  .opencode/superpowers/, with local changes in
+  .opencode/superpowers-local.patch.
+  See .opencode/superpowers/LICENSE and .opencode/superpowers/UPSTREAM.md.
 
 technical-writer
   Source: https://github.com/riekelt/technical-writer
