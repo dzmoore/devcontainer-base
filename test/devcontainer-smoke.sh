@@ -190,7 +190,7 @@ PY
 run_static() {
   say "T1 static contract"
   python3 - "$REPO" <<'PY'
-import json, os, pathlib, re, sys
+import fnmatch, json, os, pathlib, re, sys
 repo = pathlib.Path(sys.argv[1])
 dc_path = repo / '.devcontainer' / 'devcontainer.json'
 lock_path = repo / '.devcontainer' / 'devcontainer-lock.json'
@@ -245,6 +245,255 @@ if opencode_path.is_file():
     check('superpowers@git+https://github.com/obra/superpowers.git' in opencode_text,
           'opencode.jsonc must enable the superpowers plugin')
 
+# Copy writer agent and vendored writing skills
+opencode_config = repo / 'opencode.jsonc'
+if opencode_config.is_file():
+    config_text = opencode_config.read_text()
+    check('elements-of-style@git' not in config_text,
+          'opencode.jsonc must not load the Elements of Style plugin at runtime')
+    check('technical-writer@git' not in config_text,
+          'opencode.jsonc must not load a technical-writer plugin at runtime')
+
+expected_skills = {
+    'technical-writing', 'writing-design-docs', 'recording-decisions',
+    'writing-changelogs', 'writing-runbooks', 'writing-issues',
+    'writing-postmortems', 'documenting-legacy-codebases',
+    'diagramming-processes', 'documenting-contracts',
+    'reviewing-technical-prose', 'writing-clearly-and-concisely',
+    'writing-commits-and-pull-requests',
+}
+
+copy_agent = repo / '.opencode' / 'agents' / 'copy-writer.md'
+check(copy_agent.is_file(), 'copy-writer agent missing')
+if copy_agent.is_file():
+    agent_text = copy_agent.read_text()
+    check('mode: subagent' in agent_text, 'copy-writer must be a subagent')
+    check('model: opencode-go/deepseek-v4.1-flash' in agent_text,
+          'copy-writer must use the approved model')
+    check('This is a hard gate.' in agent_text,
+          'copy-writer must state the skill-loading gate')
+    check('SKILLS_LOADED:' in agent_text,
+          'copy-writer must report loaded skills')
+    check('  - action: edit\n    resource: "*"\n    effect: deny' in agent_text,
+          'copy-writer must deny edits outside prose files')
+    for skill_id in sorted(expected_skills):
+        check(f'resource: "{skill_id}"' in agent_text,
+              f'copy-writer must allow skill {skill_id}')
+    for denied in ('.opencode/**', '.git/**', 'node_modules/**'):
+        check(f'resource: "{denied}"' in agent_text,
+              f'copy-writer must not edit {denied}')
+    mcp_servers = []
+    if opencode_config.is_file():
+        mcp_servers = re.findall(r'"([^"]+)"\s*:\s*\{\s*"type"',
+                                 opencode_config.read_text())
+    for server in mcp_servers:
+        check(f'action: "{server}_*"' in agent_text,
+              f'copy-writer must deny MCP server {server}')
+    check('resource: "*--output*"' in agent_text,
+          'copy-writer must deny shell --output writes')
+    check('resource: "*>*"' in agent_text,
+          'copy-writer must deny shell redirection writes')
+    check('resource: "*.excalidraw"' in agent_text,
+          'copy-writer must allow Excalidraw source edits')
+    check('resource: "scripts/render-excalidraw.sh *"' in agent_text,
+          'copy-writer must allow the diagram renderer')
+
+    permissions_text = agent_text.split('permissions:', 1)[1].split('\n---', 1)[0]
+    permission_rules = []
+    current = None
+    for line in permissions_text.splitlines():
+        m = re.match(r'\s*- action:\s*(.+?)\s*$', line)
+        if m:
+            current = {'action': m.group(1).strip().strip('"')}
+            permission_rules.append(current)
+            continue
+        m = re.match(r'\s+resource:\s*(.+?)\s*$', line)
+        if m and current is not None:
+            current['resource'] = m.group(1).strip().strip('"')
+            continue
+        m = re.match(r'\s+effect:\s*(.+?)\s*$', line)
+        if m and current is not None:
+            current['effect'] = m.group(1).strip().strip('"')
+
+    def effective(action, resource):
+        result = 'allow'
+        for rule in permission_rules:
+            if (fnmatch.fnmatchcase(action, rule['action'])
+                    and fnmatch.fnmatchcase(resource, rule['resource'])):
+                result = rule['effect']
+        return result
+
+    permission_cases = [
+        ('edit', 'README.md', 'allow'),
+        ('edit', 'docs/guide.md', 'allow'),
+        ('edit', 'src/app.py', 'deny'),
+        ('edit', '.opencode/agents/copy-writer.md', 'deny'),
+        ('shell', 'git diff --staged', 'allow'),
+        ('shell', 'git diff --output=app.py', 'deny'),
+        ('shell', 'git diff > app.py', 'deny'),
+        ('shell', 'git commit -m x', 'deny'),
+        ('edit', 'docs/diagrams/process.excalidraw', 'allow'),
+        ('shell', 'scripts/render-excalidraw.sh docs/diagrams/process.excalidraw', 'allow'),
+        ('skill', 'writing-commits-and-pull-requests', 'allow'),
+        ('skill', 'run-research', 'deny'),
+        ('parallel-search_web_search', '*', 'deny'),
+        ('brave-search-mcp-server_brave_web_search', '*', 'deny'),
+        ('experimental_image_generate', 'opencode-go/deepseek-v4.1-flash', 'deny'),
+    ]
+    for action, resource, expected in permission_cases:
+        actual = effective(action, resource)
+        check(actual == expected,
+              f'permission matrix: {action} {resource} expected {expected}, got {actual}')
+
+found_skills = {}
+for skill_md in (repo / '.opencode' / 'skills').rglob('SKILL.md'):
+    skill_id = skill_md.parent.name
+    check(skill_id not in found_skills,
+          f'duplicate skill id: {skill_id}')
+    found_skills[skill_id] = skill_md
+    text = skill_md.read_text()
+    check(text.startswith('---\n'), f'{skill_md}: missing frontmatter')
+    check('\nname:' in text, f'{skill_md}: missing frontmatter name')
+    check('\ndescription:' in text, f'{skill_md}: missing frontmatter description')
+
+for skill_id in sorted(expected_skills):
+    check(skill_id in found_skills, f'missing skill: {skill_id}')
+
+diagram_skill = repo / '.opencode' / 'skills' / 'diagramming-processes'
+check(diagram_skill.is_dir(), 'local diagramming-processes skill missing')
+for rel in ('SKILL.md', 'LICENSE', 'UPSTREAM.md',
+            'references/excalidraw-schema.md', 'references/element-types.md',
+            'templates/flowchart.excalidraw', 'templates/sequence.excalidraw',
+            'templates/swimlane.excalidraw'):
+    check((diagram_skill / rel).is_file(),
+          f'diagramming-processes missing {rel}')
+for png in ('flowchart.png', 'sequence.png', 'swimlane.png'):
+    path = diagram_skill / 'templates' / png
+    check(path.is_file() and path.stat().st_size > 1000,
+          f'diagramming-processes missing render {png}')
+
+flowchart = diagram_skill / 'templates' / 'flowchart.excalidraw'
+if flowchart.is_file():
+    data = json.loads(flowchart.read_text())
+    elements = {e['id']: e for e in data.get('elements', [])}
+    arrows = [e for e in elements.values() if e.get('type') == 'arrow']
+    check(len(arrows) >= 3, 'flowchart must have arrows')
+    for arrow in arrows:
+        start = arrow.get('startBinding') or {}
+        end = arrow.get('endBinding') or {}
+        check(start.get('elementId'),
+              f'flowchart arrow {arrow["id"]} missing start binding')
+        check(end.get('elementId'),
+              f'flowchart arrow {arrow["id"]} missing end binding')
+
+swimlane = diagram_skill / 'templates' / 'swimlane.excalidraw'
+if swimlane.is_file():
+    swimlane_data = json.loads(swimlane.read_text())
+    for element in swimlane_data.get('elements', []):
+        if element.get('type') == 'arrow':
+            start = element.get('startBinding') or {}
+            end = element.get('endBinding') or {}
+            check(start.get('elementId') and end.get('elementId'),
+                  f'swimlane arrow {element["id"]} missing a shape binding')
+
+for template, minimum in (('flowchart', 2), ('sequence', 4), ('swimlane', 3)):
+    path = diagram_skill / 'templates' / f'{template}.excalidraw'
+    if not path.is_file():
+        continue
+    template_data = json.loads(path.read_text())
+    active = [e for e in template_data.get('elements', [])
+              if not e.get('isDeleted')]
+    by_id = {e['id']: e for e in active}
+    arrow_ids = {e['id'] for e in active if e.get('type') == 'arrow'}
+    for arrow in (e for e in active if e.get('type') == 'arrow'):
+        for bound in arrow.get('boundElements') or []:
+            if bound.get('type') == 'text':
+                label = by_id.get(bound.get('id'))
+                check(label is not None and label.get('containerId') == arrow['id'],
+                      f'{template} arrow label {bound.get("id")} not bound to {arrow["id"]}')
+    arrow_labels = [e for e in active if e.get('type') == 'text'
+                    and e.get('containerId') in arrow_ids]
+    check(len(arrow_labels) >= minimum,
+          f'{template} must bind at least {minimum} arrow labels')
+
+if (diagram_skill / 'SKILL.md').is_file():
+    diagram_text = (diagram_skill / 'SKILL.md').read_text()
+    for marker in ('Excalidraw is the only diagram tool', 'fontFamily: 5',
+                   'scripts/render-excalidraw.sh', '.excalidraw', '.png'):
+        check(marker in diagram_text,
+              f'diagramming-processes missing {marker}')
+
+check((repo / '.opencode' / 'skills' / 'technical-writer' / 'LICENSE').is_file(),
+      'technical-writer LICENSE missing')
+upstream_pins = {
+    repo / '.opencode' / 'skills' / 'technical-writer' / 'UPSTREAM.md':
+        '85e53729dd959a2795d593d6769068e342cf3486',
+    repo / '.opencode' / 'skills' / 'elements-of-style' / 'UPSTREAM.md':
+        '05fc4f0d2b97b7c042dd9949ad658568e4a1324e',
+}
+for upstream, pin in upstream_pins.items():
+    check(upstream.is_file(), f'{upstream}: missing')
+    if upstream.is_file():
+        check(pin in upstream.read_text(), f'{upstream}: missing pinned commit')
+
+eos_ref = (repo / '.opencode' / 'skills' / 'elements-of-style' /
+           'writing-clearly-and-concisely' / 'elements-of-style.md')
+check(eos_ref.is_file() and eos_ref.stat().st_size > 50000,
+      'Elements of Style reference is missing or truncated')
+notice_path = repo / 'NOTICE'
+check(notice_path.is_file(), 'NOTICE missing')
+if notice_path.is_file():
+    notice_text = notice_path.read_text()
+    check('awesome-copilot' in notice_text,
+          'NOTICE missing awesome-copilot attribution')
+    check('@excalidraw/cli' in notice_text,
+          'NOTICE missing renderer attribution')
+    check('Firefox' in notice_text,
+          'NOTICE missing Firefox attribution')
+
+readme_path = repo / 'README.md'
+check(readme_path.is_file(), 'README.md missing')
+if readme_path.is_file():
+    readme_text = readme_path.read_text()
+    for marker in ('### Copy writer subagent', 'riekelt/technical-writer',
+                   'obra/the-elements-of-style', '#### Diagrams',
+                   'render-excalidraw.sh', 'diagramming-processes'):
+        check(marker in readme_text, f'README.md missing {marker}')
+
+update_script = repo / 'scripts' / 'update-writing-skills.sh'
+check(update_script.is_file(), 'writing skills update script missing')
+if update_script.is_file():
+    script_text = update_script.read_text()
+    for pin in upstream_pins.values():
+        check(pin in script_text, f'update script missing pinned commit {pin}')
+    check('TW_EXCLUDE="diagramming-processes"' in script_text,
+          'update script must exclude the local diagramming skill')
+    check('--exclude "$TW_EXCLUDE"' in script_text,
+          'update script --check must exclude the local diagramming skill')
+    tw_rm_lines = [line.strip() for line in script_text.splitlines()
+                   if 'rm -rf' in line and 'TW_DEST' in line]
+    check(tw_rm_lines == ['rm -rf "$TW_DEST"/*/',
+                          'rm -rf "$TW_DEST/$TW_EXCLUDE"'],
+          f'update script must remove only vendored skill directories: {tw_rm_lines}')
+    eos_rm_lines = [line.strip() for line in script_text.splitlines()
+                    if 'rm -rf' in line and 'EOS_DEST' in line]
+    check(not eos_rm_lines,
+          f'update script must not remove the EOS tree: {eos_rm_lines}')
+    check('cp "$tmp/elements-of-style/skills/writing-clearly-and-concisely/elements-of-style.md"' in script_text,
+          'update script must copy only the EOS reference text')
+
+renderer = repo / 'scripts' / 'render-excalidraw.sh'
+check(renderer.is_file(), 'Excalidraw renderer missing')
+if renderer.is_file():
+    renderer_text = renderer.read_text()
+    check('0.3.0' in renderer_text, 'Excalidraw renderer must pin 0.3.0')
+    check('@excalidraw/cli' in renderer_text,
+          'Excalidraw renderer must use the official CLI')
+    check('--scale' in renderer_text, 'Excalidraw renderer must set a scale')
+    check('--out' in renderer_text, 'Excalidraw renderer must set an output path')
+    check('--browser-path' in renderer_text,
+          'Excalidraw renderer must pass the browser path')
+
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
     target = m.get('target') or m.get('dst') or ''
@@ -261,8 +510,8 @@ check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
 apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*', dockerfile)
 check(apt_block is not None, 'Dockerfile apt package block not found')
 if apt_block:
-    for pkg in ('libatomic1', 'openssh-client', 'ripgrep', 'less', 'locales', 'unzip', 'zip',
-                'bash-completion', 'python3', 'python3-venv', 'pipx'):
+    for pkg in ('libatomic1', 'openssh-client', 'openssl', 'firefox-esr', 'ripgrep', 'less',
+                'locales', 'unzip', 'zip', 'bash-completion', 'python3', 'python3-venv', 'pipx'):
         check(re.search(rf'(?m)^\s*{re.escape(pkg)}\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
               f'Dockerfile apt package block must install {pkg}')
 check(re.search(r'^ENV LANG=en_US\.UTF-8', dockerfile, re.M) is not None,
@@ -480,6 +729,8 @@ PY
   python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
     "$REPO/.devcontainer/bin/gh-app-token"
   echo 'PASS: GitHub App helper syntax'
+  bash -n "$REPO/scripts/render-excalidraw.sh"
+  echo 'PASS: Excalidraw renderer syntax'
 }
 
 run_app_token() {

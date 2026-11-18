@@ -41,6 +41,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), Glow (`glow`) with `less` pager, curl, OpenSSH client, unzip, zip, yq |
 | **AI & workflow** | OpenCode 2.3.0, Neovim 0.12.6, Starship 1.27.0 |
+| **Rendering** | Firefox ESR (headless) for the official Excalidraw CLI and PNG diagram rendering |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
 | **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, Kubernetes config, and `/worktrees` |
 
@@ -161,6 +162,14 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `opencode.jsonc` | OpenCode project config; enables the Superpowers plugin and configures the Parallel Search and Brave Search MCP servers |
 | `.opencode/agents/research.md` | Research subagent definition and write/network permissions |
 | `.opencode/skills/run-research/` | Research orchestration skill and report template |
+| `.opencode/agents/copy-writer.md` | Copy writer subagent definition, skill routing, and prose and diagram permissions |
+| `.opencode/skills/technical-writer/` | 10 vendored technical-writer skills, MIT license, and upstream pin |
+| `.opencode/skills/elements-of-style/` | Vendored Elements of Style reference and local wrapper |
+| `.opencode/skills/diagramming-processes/` | Local Excalidraw-only diagramming skill, references, and templates |
+| `.opencode/skills/writing-commits-and-pull-requests/` | Local skill for commit messages, pull request text, and review comments |
+| `NOTICE` | Third-party writing material attribution |
+| `scripts/render-excalidraw.sh` | Render `.excalidraw` sources to PNG beside them |
+| `scripts/update-writing-skills.sh` | Refresh or verify the vendored writing skills |
 | `research/` | Local research artifacts (gitignored) |
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
 | `test/paste-smoke.py` | PTY paste regression test |
@@ -327,11 +336,91 @@ research/<YYYY-MM-DD>-<slug>/
 
 `BRAVE_API_KEY` must be set before OpenCode starts. If it is missing or either MCP server fails, the research agents continue with the other provider and record the degraded mode. If both MCPs are unavailable, the run marks the affected claims `unverified` rather than falling back to built-in search. Amazon detail pages and Reddit may block fetching; the report marks those claims `unverified` rather than inventing them.
 
+### Copy writer subagent
+
+The project config defines a `copy-writer` subagent for finished prose and
+Excalidraw diagrams: documentation, READMEs, design docs, ADRs, runbooks,
+changelogs, postmortems, issue descriptions, API references, commit messages,
+pull request descriptions and comments, release notes, error messages, and
+other text a human will read, plus process, lifecycle, and interaction
+diagrams. It loads the vendored writing skills by default and applies the house
+rules: conclusion first, every claim traceable, one fact in one home, plain
+English, and no em dashes or AI tells.
+
+Ask the primary agent to use it:
+
+```text
+Use the copy-writer subagent to rewrite the README introduction for a platform team.
+```
+
+```text
+Use the copy-writer subagent to write a commit message for the staged changes.
+```
+
+The agent writes prose and `.excalidraw` source files directly and returns
+commit messages, pull request descriptions, and pull request comments as
+ready-to-paste text. It does not commit, post, push, or open pull requests. It
+can run a narrow set of read-only `git` and `gh` commands, plus
+`scripts/render-excalidraw.sh` to render a diagram PNG. It cannot use the web,
+launch subagents, or edit code and configuration.
+
+#### Vendored writing skills
+
+| Skill | Source | Purpose |
+| --- | --- | --- |
+| `technical-writing` | technical-writer | Core house style, truth rules, and banned constructions |
+| `writing-design-docs`, `recording-decisions`, `writing-changelogs`, `writing-runbooks`, `writing-issues`, `writing-postmortems` | technical-writer | Document-type formats |
+| `documenting-contracts`, `documenting-legacy-codebases` | technical-writer | API and legacy documentation |
+| `reviewing-technical-prose` | technical-writer | Final review pass |
+| `writing-clearly-and-concisely` | the-elements-of-style | Strunk's 1918 rules and full reference |
+| `diagramming-processes` | This repository, adapted from technical-writer and awesome-copilot | Excalidraw process and lifecycle diagrams, source plus PNG |
+| `writing-commits-and-pull-requests` | This repository | Commit, pull request, and review-comment formats |
+
+The technical-writer skills are vendored from
+[riekelt/technical-writer](https://github.com/riekelt/technical-writer) at
+commit `85e5372` (v1.8.4, MIT). The Elements of Style reference is vendored
+from [obra/the-elements-of-style](https://github.com/obra/the-elements-of-style)
+at commit `05fc4f0` (1918 text, public domain). The `diagramming-processes`
+skill is local and adapted from technical-writer and
+[github/awesome-copilot](https://github.com/github/awesome-copilot)'s
+`excalidraw-diagram-generator` skill (MIT). `writing-commits-and-pull-requests`
+is local to this repository.
+
+At the pinned commit, the Elements of Style repository has no license file.
+The 1918 text is public domain; the wrapper at
+`.opencode/skills/elements-of-style/` is a local adaptation that points at the
+verbatim text. See the `UPSTREAM.md` files for the exact pins and attribution.
+
+#### Diagrams
+
+For process, lifecycle, and interaction diagrams, the skill writes an
+`.excalidraw` source and renders a `.png` beside it with
+`scripts/render-excalidraw.sh`. The `.excalidraw` file is the editable source;
+the PNG is for Markdown. Commit both.
+
+```bash
+scripts/render-excalidraw.sh docs/diagrams/refund-process.excalidraw
+```
+
+The renderer uses the official `@excalidraw/cli` 0.3.0 through the headless
+Firefox ESR installed in the devcontainer. It downloads the pinned CLI on first
+use and uses the npm cache after that. Firefox ESR adds about 272 MB plus its
+GTK and Mesa dependencies to the image; the CLI does not download a browser.
+The `diagramming-processes` skill is not refreshed by
+`scripts/update-writing-skills.sh`; it is repository-owned.
+
+To refresh the vendored trees, run `scripts/update-writing-skills.sh`; use
+`--check` to verify that the working tree matches the pinned commits. To
+change a pin, edit the constants at the top of the script and update the
+matching `UPSTREAM.md` and `NOTICE` in the same commit. Both commands need
+network access and are not part of the smoke suite.
+
 ### Design notes
 
 A few choices are intentional and worth knowing before changing the setup:
 
 - The non-root user uses `/bin/bash` because some Dev Container Features run `su <user> -c` snippets that rely on bash builtins.
+- Firefox ESR is installed only for headless Excalidraw rendering. It is not a user-facing browser; it adds about 272 MB plus GTK and Mesa dependencies, and the official CLI drives it through Playwright's Firefox channel.
 - `libatomic1` is required by the official Node.js arm64 binaries, and `ripgrep` avoids OpenCode's arm64 fallback path.
 - `less` is installed from Debian because Glow's `--pager` mode defaults to `less -r`, and `debian:bookworm-slim` does not include a pager.
 - Mount targets are created and chowned in the image so fresh named volumes are writable by `developer`; `post-create.sh` repairs existing volumes.
