@@ -36,6 +36,12 @@ permissions:
   - action: skill
     resource: receiving-code-review
     effect: allow
+  - action: "parallel-search_*"
+    resource: "*"
+    effect: deny
+  - action: "brave-search-mcp-server_*"
+    resource: "*"
+    effect: deny
 ---
 
 # Implementer

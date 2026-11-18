@@ -469,6 +469,10 @@ for rel, agent in (('requesting-code-review/SKILL.md', 'validator'),
               f'{rel} must name the control-plane agent {agent}')
         check('general-purpose' not in text,
               f'{rel} must not name a general-purpose subagent')
+builder_path = repo / '.opencode' / 'superpowers' / 'skills' / 'brainstorming' / 'builder-check-prompt.md'
+if builder_path.is_file():
+    check('rubber-duck' in builder_path.read_text(),
+          'builder-check-prompt.md must name rubber-duck')
 
 check('Superpowers' in (repo / 'NOTICE').read_text(), 'NOTICE must attribute Superpowers')
 agents_text = (repo / '.opencode' / 'AGENTS.md').read_text()
@@ -484,6 +488,14 @@ check('new host MCP server' in agents_text and 'non-research agent' in agents_te
       'AGENTS.md must say every new host MCP needs a deny in every non-research agent')
 check('The plugin skips child sessions' in agents_text,
       'AGENTS.md must explain the worker bootstrap without a false plugin rationale')
+security_skill = repo / '.opencode' / 'skills' / 'security-review' / 'SKILL.md'
+check(security_skill.is_file(), 'security-review skill missing')
+if security_skill.is_file():
+    security_text = security_skill.read_text()
+    check('non-research control-plane agent' in security_text,
+          'security-review skill must name every non-research control-plane agent')
+    check('only agent allowed' in security_text,
+          'security-review skill must say research is the only agent allowed MCP use')
 check('# --- opencode control plane ---' in (repo / '.devcontainer/post-create.sh').read_text(),
       'post-create must install the control plane')
 
@@ -890,7 +902,9 @@ if overlay_heredoc:
                   for rule in overlay_perms),
           'hermetic host overlay must not put mcp.use/plugin.use under permissions')
 run_smoke_pos = smoke_text.find('\nrun_smoke() {')
-smoke_body = smoke_text[run_smoke_pos:] if run_smoke_pos != -1 else ''
+run_smoke_end = smoke_text.find('\nrun_paste() {', run_smoke_pos)
+smoke_body = (smoke_text[run_smoke_pos:run_smoke_end]
+              if run_smoke_pos != -1 and run_smoke_end != -1 else '')
 marker_pos = smoke_body.find('/workspace/.dc-smoke-prefix')
 guard_pos = smoke_body.find('if [ "$hermetic" -eq 1 ]')
 desc_pos = smoke_body.find('Host test research override')
@@ -912,11 +926,12 @@ check(guard_pos != -1 and probe_pos > guard_pos,
 for marker in ('project-probe', 'project-plugin-ran', 'project-plugin-loaded'):
     check(marker in smoke_body,
           f'run_smoke must assert the project probe deny {marker!r}')
-for marker in ('invalid fork owner', 'invalid pull request number'):
+for marker in ('invalid worktree name', 'invalid fork owner',
+               'clone source must not contain', 'invalid pull request number'):
     check(marker in smoke_body,
           f'run_smoke must assert the C1 validation message {marker!r}')
-check('|| die "cannot create agents temp file"' not in smoke_body,
-      'run_smoke must not call the undefined die helper inside the container')
+check(re.search(r'\bdie\b', smoke_body) is None,
+      'run_smoke must not call the host-only die helper inside the container')
 check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_clone_pos < gate_end_pos,
       'repo clone test must be inside the disposable-copy gate')
 check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_worktree_pos < gate_end_pos,
@@ -1369,6 +1384,16 @@ for name in read_only:
     for action in ('execute', 'webfetch', 'websearch', 'external_directory',
                    'opencode_*', 'worktree_*', 'session_*',
                    'parallel-search_*', 'brave-search-mcp-server_*'):
+        check(has_rule(rules, action, '*', 'deny'),
+              f'{name} must deny {action} *')
+
+for name in ('orchestrator', 'copy-writer', 'design', 'rubber-duck',
+             'task-enumerator', 'implementer', 'validator', 'security-reviewer'):
+    fm = frontmatters.get(name)
+    if fm is None:
+        continue
+    rules = permission_rules(fm)
+    for action in ('parallel-search_*', 'brave-search-mcp-server_*'):
         check(has_rule(rules, action, '*', 'deny'),
               f'{name} must deny {action} *')
 

@@ -80,10 +80,14 @@ finding; say why the model missed it.
 - Host agent overrides replace the body, inherit unspecified fields, and append
   permission rules. They are trusted and can weaken TDD or security policy.
   Review them like code.
-- A host search or write-capable MCP server needs an explicit deny in every
-  docs-only agent. The two known servers, `parallel-search_*` and
-  `brave-search-mcp-server_*`, must stay denied in `copy-writer`; a new host
-  server needs its own deny by name.
+- Every non-research control-plane agent needs an explicit deny for every host
+  search or write-capable MCP server. The two known servers,
+  `parallel-search_*` and `brave-search-mcp-server_*`, must stay denied in
+  every non-research agent (`orchestrator`, `copy-writer`, `design`,
+  `rubber-duck`, `task-enumerator`, `implementer`, `validator`,
+  `security-reviewer`). A new host server needs a manual deny in every
+  non-research agent. `research` is the only agent allowed to use the research
+  MCP servers.
 - The overlay is integrity protection, not a confidentiality boundary. The
   container is privileged for Docker-in-Docker; say so when the change relies on
   isolation.
