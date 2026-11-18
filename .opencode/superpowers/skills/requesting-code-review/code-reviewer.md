@@ -1,11 +1,12 @@
 # Code Reviewer Prompt Template
 
-Use this template when dispatching a code reviewer subagent.
+Use this template when dispatching a code reviewer subagent. The `validator`
+agent file owns model selection; do not pass a model at dispatch.
 
 **Purpose:** Review completed work against requirements and code quality standards before it cascades into more work.
 
 ```
-Subagent (general-purpose):
+agent: validator
   description: "Review code changes"
   prompt: |
     You are a Senior Code Reviewer with expertise in software architecture,

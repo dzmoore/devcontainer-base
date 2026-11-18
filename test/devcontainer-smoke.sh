@@ -278,6 +278,43 @@ if lock_path.is_file():
     lock = lock_path.read_text()
     check('ref=v7.0.2' in lock, 'superpowers.lock must pin v7.0.2')
     check('commit=c62ffea8267a70de07583e153544d355b6748a56' in lock, 'superpowers.lock commit mismatch')
+
+tdd_skill = repo / '.opencode' / 'superpowers' / 'skills' / 'test-driven-development' / 'SKILL.md'
+check(tdd_skill.is_file(), 'vendored TDD skill missing')
+if tdd_skill.is_file():
+    tdd_text = tdd_skill.read_text()
+    for url in (
+        'https://newsletter.kentbeck.com/p/canon-tdd',
+        'https://martinfowler.com/bliki/TestDrivenDevelopment.html',
+        'https://www.jamesshore.com/v2/blog/2005/red-green-refactor',
+    ):
+        check(url in tdd_text,
+              f'vendored TDD skill missing canonical reference {url}')
+
+sdd_refs = repo / '.opencode' / 'superpowers' / 'skills' / 'subagent-driven-development' / 'references'
+reviewer_prompt = (repo / '.opencode' / 'superpowers' / 'skills' /
+                   'requesting-code-review' / 'code-reviewer.md')
+vendored_prompts = (
+    ('subagent-driven-development/references/fix-loop.md',
+     sdd_refs / 'fix-loop.md'),
+    ('subagent-driven-development/references/handling-reports.md',
+     sdd_refs / 'handling-reports.md'),
+    ('subagent-driven-development/references/final-review.md',
+     sdd_refs / 'final-review.md'),
+    ('requesting-code-review/code-reviewer.md', reviewer_prompt),
+)
+for rel, path in vendored_prompts:
+    check(path.is_file(), f'{rel} missing')
+    if path.is_file():
+        text = path.read_text()
+        for phrase in ('more capable model', 'most capable available model',
+                       'Subagent (general-purpose):'):
+            check(phrase not in text,
+                  f'{rel} must not contain {phrase!r}')
+if reviewer_prompt.is_file():
+    check('agent: validator' in reviewer_prompt.read_text(),
+          'code-reviewer.md must name agent: validator')
+
 check('Superpowers' in (repo / 'NOTICE').read_text(), 'NOTICE must attribute Superpowers')
 check('# --- opencode control plane ---' in (repo / '.devcontainer/post-create.sh').read_text(),
       'post-create must install the control plane')
