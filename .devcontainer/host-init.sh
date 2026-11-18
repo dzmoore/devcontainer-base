@@ -24,6 +24,9 @@ if git -C "$project_root" rev-parse --git-dir >/dev/null 2>&1; then
   esac
   mkdir -p "$(dirname "$exclude_path")"
   if ! grep -qxF 'repos/' "$exclude_path" 2>/dev/null; then
+    if [ -s "$exclude_path" ] && [ "$(tail -c 1 "$exclude_path" | wc -l)" -eq 0 ]; then
+      printf '\n' >>"$exclude_path"
+    fi
     printf '%s\n' 'repos/' >>"$exclude_path"
   fi
 fi

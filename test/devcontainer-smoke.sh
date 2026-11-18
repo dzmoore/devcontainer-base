@@ -112,7 +112,7 @@ PY
       "probe-disabled": {
         "type": "local",
         "command": ["true"],
-        "enabled": false
+        "disabled": true
       }
     }
   }
@@ -645,6 +645,31 @@ if example_config.is_file():
 if example_agent.is_file():
     check('description:' in example_agent.read_text(),
           'host overlay example research override must define a description')
+
+smoke_text = (repo / 'test' / 'devcontainer-smoke.sh').read_text()
+overlay_heredoc = re.search(
+    r'cat >"\$COPY/host-opencode/opencode\.json" <<\'JSON\'\n(.*?)\nJSON',
+    smoke_text, re.S)
+check(overlay_heredoc is not None, 'hermetic host overlay heredoc missing')
+if overlay_heredoc:
+    heredoc = overlay_heredoc.group(1)
+    check('"disabled": true' in heredoc,
+          'hermetic host overlay probe must use "disabled": true')
+    check('"enabled":' not in heredoc,
+          'hermetic host overlay probe must not use "enabled":')
+run_smoke_pos = smoke_text.find('\nrun_smoke() {')
+smoke_body = smoke_text[run_smoke_pos:] if run_smoke_pos != -1 else ''
+marker_pos = smoke_body.find('/workspace/.dc-smoke-prefix')
+guard_pos = smoke_body.find('if [ "$hermetic" -eq 1 ]')
+desc_pos = smoke_body.find('Host test research override')
+probe_pos = smoke_body.find('check "host overlay: probe-disabled listed"')
+check(marker_pos != -1, 'run_smoke must detect the disposable copy marker')
+check(guard_pos != -1 and marker_pos < guard_pos,
+      'run_smoke must gate hermetic checks on the disposable copy')
+check(guard_pos != -1 and desc_pos > guard_pos,
+      'research override assertion must be inside the hermetic gate')
+check(guard_pos != -1 and probe_pos > guard_pos,
+      'probe-disabled assertion must be inside the hermetic gate')
 
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
@@ -1313,30 +1338,36 @@ PY
 then
   bad "control-plane agents"
 fi
-if [ -f "$HOME/.agents.json" ]; then
-  if python3 - "$HOME/.agents.json" <<'PY'
+hermetic=0
+if [ -f /workspace/.dc-smoke-prefix ]; then
+  hermetic=1
+fi
+if [ "$hermetic" -eq 1 ]; then
+  if [ -f "$HOME/.agents.json" ]; then
+    if python3 - "$HOME/.agents.json" <<'PY'
 import json, sys
 agents = {a['id']: a for a in json.load(open(sys.argv[1]))}
 description = agents.get('research', {}).get('description', '')
 assert description == 'Host test research override', description
 PY
-  then
-    pass "host overlay: research agent override"
+    then
+      pass "host overlay: research agent override"
+    else
+      bad "host overlay: research agent override"
+    fi
+  fi
+  if opencode mcp list >"$HOME/.mcp-list.txt" 2>&1; then
+    check "host overlay: probe-disabled listed" grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"
+    if [ -f /etc/opencode/opencode.json ]; then
+      for server in parallel-search brave-search-mcp-server; do
+        if grep -qF "\"$server\"" /etc/opencode/opencode.json; then
+          check "host overlay: $server listed" grep -qF "$server" "$HOME/.mcp-list.txt"
+        fi
+      done
+    fi
   else
-    bad "host overlay: research agent override"
+    bad "host overlay: mcp list failed"
   fi
-fi
-if opencode mcp list >"$HOME/.mcp-list.txt" 2>&1; then
-  check "host overlay: probe-disabled listed" grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"
-  if [ -f /etc/opencode/opencode.json ]; then
-    for server in parallel-search brave-search-mcp-server; do
-      if grep -qF "\"$server\"" /etc/opencode/opencode.json; then
-        check "host overlay: $server listed" grep -qF "$server" "$HOME/.mcp-list.txt"
-      fi
-    done
-  fi
-else
-  bad "host overlay: mcp list failed"
 fi
 check "host overlay: /etc/opencode read-only" bash -c \
   'findmnt -no OPTIONS /etc/opencode 2>/dev/null | tr "," "\n" | grep -qx ro'
