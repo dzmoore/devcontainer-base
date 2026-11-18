@@ -85,7 +85,34 @@ done
 # Repair ownership for existing volumes. Fresh volumes inherit developer
 # ownership from the pre-created directories in the Dockerfile. Chown the
 # parent directories too so tools can create new files under them.
-sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees
+sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"
+
+# --- multi-repo workspace ---
+# Clones live in the bind-mounted workspace so they persist without a named
+# volume. /worktrees is a compatibility symlink.
+echo "Configuring multi-repo workspace..."
+mkdir -p /workspace/repos
+if [ -L /worktrees ]; then
+  if [ "$(readlink /worktrees)" != "/workspace/repos" ]; then
+    sudo -n rm -f /worktrees
+    sudo -n ln -s /workspace/repos /worktrees
+  fi
+elif mountpoint -q /worktrees 2>/dev/null; then
+  echo "WARNING: /worktrees is an old volume mountpoint. Move its contents to" \
+    "/workspace/repos, remove the worktrees volume from devcontainer.json, and" \
+    "recreate the container. Then run 'git worktree repair' in each clone." >&2
+elif [ -d /worktrees ]; then
+  if [ -z "$(ls -A /worktrees 2>/dev/null)" ]; then
+    sudo -n rmdir /worktrees
+    sudo -n ln -s /workspace/repos /worktrees
+  else
+    echo "WARNING: /worktrees is a non-empty directory. Move its contents to" \
+      "/workspace/repos and recreate the container. Then run 'git worktree repair'" \
+      "in each clone; /worktrees was left untouched." >&2
+  fi
+else
+  sudo -n ln -s /workspace/repos /worktrees
+fi
 
 # --- opencode host secrets ---
 # The host overlay references secrets as {file:/etc/opencode/...}. Validate
@@ -149,6 +176,11 @@ for helper in gh-app-token gh-app; do
     ln -sfn "$src" "$HOME/.local/bin/$helper"
   fi
 done
+echo "Installing repo helper command..."
+src="/workspace/.devcontainer/bin/repo"
+if [ -x "$src" ]; then
+  ln -sfn "$src" "$HOME/.local/bin/repo"
+fi
 
 # Kubernetes client-go locks every file listed in KUBECONFIG. On macOS
 # VirtioFS bind mounts the lock file can be created with mode 000, which makes

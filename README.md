@@ -29,7 +29,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 - **AI-assisted workflow** — OpenCode, persistent tool state, and short-lived GitHub App installation tokens for `gh` and `git`.
 - **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, paste-safe terminal settings, and a configurable system timezone that defaults to US/Pacific.
 - **Reproducible** — pinned build-time tools and a Dev Container feature lockfile.
-- **Tested** — a smoke suite covers build, runtime, shell paste, idempotency, volume lifecycle, and timezone overrides.
+- **Tested** — a smoke suite covers build, runtime, multi-repo clone/worktree, shell paste, idempotency, volume lifecycle, and timezone overrides.
 
 ## What's included
 
@@ -43,7 +43,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **AI & workflow** | OpenCode 2.3.0, Neovim 0.12.6, Starship 1.27.0 |
 | **Rendering** | Firefox ESR (headless) for the official Excalidraw CLI and PNG diagram rendering |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
-| **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, Kubernetes config, and `/worktrees` |
+| **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, and Kubernetes config; repo clones live in the workspace |
 
 > [!NOTE]
 > The upstream tools installed in the Dockerfile (`yq`, Glow, kubectl, Helm, OpenCode, Neovim, and Starship) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
@@ -73,7 +73,6 @@ Named volumes keep tool state and caches across container rebuilds:
 | `nvim-state` | `~/.local/state/nvim` | Neovim state |
 | `nvim-share` | `~/.local/share/nvim` | Neovim plugins and data |
 | `kubeconfig` | `~/.kube` | Kubernetes config and kind cluster contexts |
-| `worktrees` | `/worktrees` | Git worktrees that survive a rebuild |
 
 > [!WARNING]
 > The volume names are global to the Docker daemon. Projects using this base share the same state and caches. Rename the `source=` values in `devcontainer.json` if you need per-project isolation. The `kubeconfig` volume contains cluster credentials; rename it per project if the clusters must be isolated.
@@ -107,16 +106,17 @@ In VS Code, open the folder and run **Dev Containers: Reopen in Container** from
 
 ### Use it in your project
 
-Copy `.devcontainer/` into the project you want to develop:
+Copy `.devcontainer/` and `.opencode/` into the project you want to develop:
 
 ```bash
 git clone --depth 1 https://github.com/dzmoore/devcontainer-base.git /tmp/devcontainer-base
-mkdir -p .devcontainer
+mkdir -p .devcontainer .opencode
 cp -R /tmp/devcontainer-base/.devcontainer/. .devcontainer/
+cp -R /tmp/devcontainer-base/.opencode/. .opencode/
 rm -rf /tmp/devcontainer-base
 ```
 
-If the project already has a `.devcontainer/`, merge the files instead of overwriting them. Then update the `"name"` in `devcontainer.json` if you like, and reopen the project in the container. The rest of the configuration is self-contained.
+If the project already has a `.devcontainer/` or `.opencode/`, merge the files instead of overwriting them. Then update the `"name"` in `devcontainer.json` if you like, and reopen the project in the container. The rest of the configuration is self-contained.
 
 > [!TIP]
 > If you use [`degit`](https://github.com/Rich-Harris/degit), you can copy just the configuration with `npx degit dzmoore/devcontainer-base/.devcontainer .devcontainer`.
@@ -145,6 +145,41 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 > [!IMPORTANT]
 > Create the GitHub directory and files before the first launch. The GitHub source is now a directory mount; Docker may create a missing directory for it. The Brave source is still a single file, so if Docker creates a directory at `~/.devcontainer/brave/.env`, remove it and create the file before starting the container again.
 
+### Working with multiple repositories
+
+`host-init.sh` creates `repos/` in the project root and adds `repos/` to the repository's real git exclude (`git rev-parse --git-path info/exclude`), so clones never show up as untracked files. The workspace bind mount exposes that directory as `/workspace/repos`, and `/worktrees` is a compatibility symlink to the same path. Clones are ordinary workspace files, so they persist without a named volume.
+
+Use the `repo` helper, which `post-create.sh` symlinks into `~/.local/bin`:
+
+```bash
+repo clone dzmoore/provider-confluent --upstream crossplane-contrib/provider-confluent
+repo switch main
+repo switch --create feature/my-change
+repo pr 123
+repo worktree experiment feature/experiment
+repo list
+```
+
+- `repo clone <owner>/<repo>` clones to `/workspace/repos/<owner>/<repo>`; `--upstream` adds an `upstream` remote and fetches it.
+- `repo clone` also accepts a `file://` URL or absolute path, which is useful for local bare remotes.
+- `repo fork <upstream-owner>/<repo> <fork-owner>` clones the fork and adds the upstream.
+- `repo switch <branch>` uses `git switch`; pass `--create` to create the branch.
+- `repo pr <number>` runs `gh pr checkout`.
+- `repo worktree <name> <branch>` creates `/workspace/repos/.worktrees/<owner>/<repo>/<name>`.
+- `repo list` prints each clone, its branch, and whether it is dirty.
+
+`repo` uses the GitHub App helper when the `GITHUB_APP_*` variables are present in the environment or `~/.dc/github/.env`: it runs `gh-app-token check`, then uses `gh-app` for `gh` commands and the `gh-app-token git-credential` helper for network `clone`/`fetch`. If the App is configured but the check fails, the command prints the error and stops instead of silently downgrading. Without App variables it sources `~/.dc/github/.env` when `GITHUB_TOKEN` is unset, exports `GH_TOKEN`, and uses plain `gh`/`git`. Tokens are never written into a remote URL.
+
+#### Migrating from the old `worktrees` volume
+
+Earlier versions mounted a named `worktrees` volume at `/worktrees`. Move any clones or worktrees you want to keep into `/workspace/repos`, remove the `source=worktrees` mount from `devcontainer.json`, and recreate the container. After moving a worktree, run `git worktree repair` in the main clone so Git records the new path:
+
+```bash
+git worktree repair /workspace/repos/<owner>/<repo>/<worktree-name>
+```
+
+If `/worktrees` is still an old volume mountpoint or a non-empty directory, `post-create.sh` prints a migration warning and leaves it untouched. A fresh container creates `/worktrees` as a symlink to `/workspace/repos`.
+
 ## Configuration
 
 ### Files
@@ -155,10 +190,11 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `.devcontainer/devcontainer.json` | Features, mounts, environment, and lifecycle hooks |
 | `.devcontainer/devcontainer-lock.json` | Resolved Dev Container Feature versions |
 | `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, host secret validation, env loading, ownership repair, shell hooks, helper symlinks, Helm login |
-| `.devcontainer/host-init.sh` | Host-side init: create the overlay directories, secure modes, and ignore `repos/` |
+| `.devcontainer/host-init.sh` | Host-side init: create the overlay directories and the multi-repo workspace, and ignore `repos/` |
 | `.devcontainer/examples/opencode/` | Example host MCP configuration and `research` agent override |
 | `.devcontainer/bin/gh-app-token` | GitHub App installation token CLI: token, JSON, check, exec, and Git credential modes |
 | `.devcontainer/bin/gh-app` | Wrapper that runs `gh` with a freshly minted installation token |
+| `.devcontainer/bin/repo` | Multi-repo helper: clone, fork, list, switch, pr, and worktree |
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
 | `opencode.jsonc` | OpenCode project config; minimal and defines no MCP servers |
@@ -173,6 +209,7 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `scripts/render-excalidraw.sh` | Render `.excalidraw` sources to PNG beside them |
 | `scripts/update-writing-skills.sh` | Refresh or verify the vendored writing skills |
 | `research/` | Local research artifacts (gitignored) |
+| `repos/` | Local multi-repo clones (gitignored, created by host-init) |
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
 | `test/paste-smoke.py` | PTY paste regression test |
 
@@ -513,6 +550,8 @@ test/devcontainer-smoke.sh cleanup
 
 The PTY test covers raw paste, bracketed paste, heredocs, `TERM` fallback, and `stty -ixon` across `xterm-ghostty`, `dumb`, and `xterm-256color`.
 
+The runtime smoke suite also clones a hermetic local bare remote with `repo clone`, creates a worktree with `repo worktree`, and asserts both paths. It uses a temporary `REPO_ROOT` and a `file://` URL, so it needs no network access or GitHub credentials.
+
 Timezone coverage is layered: `static` checks the Dockerfile default, `tzdata`, and the post-create block; `pre` proves the image is correct with `--skip-post-create`; `up`, `smoke`, and `idempotent` prove the reconciled runtime state. The offset assertions use fixed UTC instants in July and January, so they exercise daylight saving rules without depending on the current date.
 
 The tests use Python 3 on the host for JSON parsing and the PTY paste test, and Python 3 plus OpenSSL for the GitHub App token tests. They target Linux, macOS, or WSL. Set `SMOKE_ROOT` to move the disposable copy, `REPO` to test another checkout, or `CID` to target an existing container.
@@ -631,7 +670,7 @@ The post-create `ghcr.io` login is intentionally PAT-backed; installation tokens
 
 `starship.toml` uses Nerd Font glyphs. Install a [Nerd Font](https://www.nerdfonts.com/) and select it in your terminal.
 
-### Permission errors on `.local`, `.config`, or `/worktrees`
+### Permission errors on `.local`, `.config`, or `/workspace/repos`
 
 Re-run the post-create script inside the container as the `developer` user:
 

@@ -7,3 +7,6 @@ research/
 # Superpowers process docs and task workspaces (local only)
 docs/superpowers/
 /.superpowers/
+
+# Multi-repo workspace clones (created by host-init)
+/repos/

@@ -126,6 +126,22 @@ mode: subagent
 Host test research override body. Use the test host MCP server for research and
 mark unsupported claims unverified.
 MD
+  say "Preparing hermetic repo remote at $COPY/test-remote.git"
+  rm -rf -- "$COPY/test-remote.git"
+  git init -q --bare "$COPY/test-remote.git"
+  git -C "$COPY/test-remote.git" symbolic-ref HEAD refs/heads/main
+  local_repo="$SMOKE_ROOT/repo-src-${RUN_ID}"
+  rm -rf -- "$local_repo"
+  git init -q "$local_repo"
+  git -C "$local_repo" config user.name "Dev Container Smoke"
+  git -C "$local_repo" config user.email "smoke@example.invalid"
+  printf 'hello\n' >"$local_repo/README.md"
+  git -C "$local_repo" add README.md
+  git -C "$local_repo" commit -q -m 'smoke: initial commit'
+  git -C "$local_repo" branch -M main
+  git -C "$local_repo" remote add origin "$COPY/test-remote.git"
+  git -C "$local_repo" push -q origin main
+  rm -rf -- "$local_repo"
   printf '%s' "$PREFIX" >"$COPY/.dc-smoke-prefix"
   printf '%s' "$COPY" >"$LAST_COPY_FILE"
   echo "PASS: disposable copy and volume prefix $PREFIX"
@@ -600,7 +616,7 @@ if renderer.is_file():
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
     target = m.get('target') or m.get('dst') or ''
-    check(target.startswith('/home/developer') or target in ('/worktrees', '/etc/opencode'),
+    check(target.startswith('/home/developer') or target == '/etc/opencode',
           f'mount target outside developer home: {target}')
     check('/home/vscode' not in target, f'vscode mount target: {target}')
 check(any('source=kubeconfig' in mount and 'target=/home/developer/.kube' in mount
@@ -687,7 +703,13 @@ check('chown -R $USERNAME:$USERNAME' in dockerfile,
       'Dockerfile must chown pre-created volume mount targets')
 check('/home/$USERNAME/.local' in dockerfile and '/home/$USERNAME/.config' in dockerfile,
       'Dockerfile must chown the .local and .config parents')
-check('/worktrees' in dockerfile, 'Dockerfile must pre-create /worktrees')
+chown_block = re.search(r'chown -R \$USERNAME:\$USERNAME(.*?)(?:\n\s*&&|\n\n)', dockerfile, re.S)
+check(chown_block is None or '/worktrees' not in chown_block.group(0),
+      'Dockerfile must not chown /worktrees')
+check('ln -s /workspace/repos /worktrees' in dockerfile,
+      'Dockerfile must link /worktrees to /workspace/repos')
+check(not re.search(r'(?m)^\s*/worktrees\s*\\?\s*$', dockerfile),
+      'Dockerfile must not pre-create /worktrees as a directory')
 for arg in ('NVIM_VERSION', 'STARSHIP_VERSION', 'GLOW_VERSION',
             'KUBECTL_VERSION', 'HELM_VERSION',
             'GLOW_SHA256_AMD64', 'GLOW_SHA256_ARM64',
@@ -742,8 +764,11 @@ check('export $(' not in post, 'post-create.sh uses unsafe export $(...)')
 check('[ -f "$GITHUB_ENV_FILE" ]' in post, 'post-create.sh must use -f for env files')
 check('# --- github env ---' in post, 'post-create.sh missing github env marker')
 check('# --- brave env ---' in post, 'post-create.sh missing brave env marker')
-check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees' in post,
-      'post-create.sh must chown .local, .config, .kube, and /worktrees to the runtime user')
+check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"' in post,
+      'post-create.sh must chown .local, .config, and .kube to the runtime user')
+chown_line = re.search(r'chown -R --no-dereference.*', post)
+check(chown_line is not None and '/worktrees' not in chown_line.group(0),
+      'post-create.sh must not chown /worktrees')
 check('specify' not in post.lower(), 'post-create.sh must not verify Spec Kit')
 check('glow --version' in post, 'post-create.sh must verify Glow')
 check('yq --version' in post, 'post-create.sh must verify yq')
@@ -796,6 +821,59 @@ check('for helper in gh-app-token gh-app' in post,
       'post-create.sh must install both GitHub App helpers')
 check('ln -sfn "$src" "$HOME/.local/bin/$helper"' in post,
       'post-create.sh must symlink the helpers into ~/.local/bin')
+
+# --- multi-repo workspace ---
+gitignore_path = repo / '.gitignore'
+check(gitignore_path.is_file(), '.gitignore missing')
+if gitignore_path.is_file():
+    ignore_lines = set(gitignore_path.read_text().splitlines())
+    check('/repos/' in ignore_lines, '.gitignore must contain /repos/')
+    check('/.superpowers/' in ignore_lines, '.gitignore must keep /.superpowers/')
+
+check(not any('source=worktrees' in mount for mount in dc.get('mounts', [])),
+      'devcontainer.json must not mount the worktrees volume')
+check(not any((dict(part.split('=', 1) for part in mount.split(',') if '=' in part).get('target')
+               or dict(part.split('=', 1) for part in mount.split(',') if '=' in part).get('dst'))
+              == '/worktrees' for mount in dc.get('mounts', [])),
+      'devcontainer.json must not mount anything at /worktrees')
+
+check('mkdir -p /workspace/repos' in post,
+      'post-create.sh must create /workspace/repos')
+check('mountpoint -q /worktrees' in post,
+      'post-create.sh must guard an old /worktrees mountpoint')
+check(re.search(r'ln\s+-s(?:f)?n?\s+/workspace/repos\s+/worktrees', post) is not None,
+      'post-create.sh must link /worktrees to /workspace/repos')
+check('ln -sfn "$src" "$HOME/.local/bin/repo"' in post,
+      'post-create.sh must symlink the repo helper into ~/.local/bin')
+
+repo_helper = repo / '.devcontainer' / 'bin' / 'repo'
+check(repo_helper.is_file(), '.devcontainer/bin/repo missing')
+check(os.access(repo_helper, os.X_OK), '.devcontainer/bin/repo must be executable')
+if repo_helper.is_file():
+    repo_text = repo_helper.read_text()
+    for marker in ('set -euo pipefail',
+                   'ROOT="${REPO_ROOT:-/workspace/repos}"',
+                   'check >/dev/null',
+                   'git-credential',
+                   'pr checkout',
+                   'git worktree add'):
+        check(marker in repo_text, f'repo helper must contain {marker!r}')
+
+smoke_text = (repo / 'test' / 'devcontainer-smoke.sh').read_text()
+check('file:///workspace/test-remote.git' in smoke_text,
+      'smoke test must clone the hermetic repo remote')
+check('repo worktree' in smoke_text, 'smoke test must exercise repo worktree')
+
+if readme_path.is_file():
+    for marker in ('Working with multiple repositories',
+                   'repo clone dzmoore/provider-confluent --upstream crossplane-contrib/provider-confluent',
+                   'repo switch', 'repo pr', 'repo worktree',
+                   'git worktree repair', '/worktrees'):
+        check(marker in readme_text, f'README.md missing multi-repo marker {marker!r}')
+    check('| `worktrees` |' not in readme_text,
+          'README.md persistent volumes table must not list worktrees')
+    check('cp -R /tmp/devcontainer-base/.opencode/. .opencode/' in readme_text,
+          'README.md copy flow must copy .opencode/')
 
 # --- timezone contract ---
 container_tz = container_env.get('TZ')
@@ -1078,6 +1156,8 @@ PY
   python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
     "$REPO/.devcontainer/bin/gh-app-token"
   echo 'PASS: GitHub App helper syntax'
+  bash -n "$REPO/.devcontainer/bin/repo"
+  echo 'PASS: repo helper syntax'
   bash -n "$REPO/scripts/render-excalidraw.sh"
   echo 'PASS: Excalidraw renderer syntax'
   bash -n "$REPO/scripts/update-superpowers.sh"
@@ -1172,11 +1252,10 @@ for d in "$HOME/.local/share/opencode" "$HOME/.local/state/opencode" \
     bad "missing dir: $d"
   fi
 done
-if [ -d /worktrees ]; then
-  check_eq "owner: /worktrees" developer "$(stat -c '%U' /worktrees)"
-  if touch /worktrees/.smoke-$$ 2>/dev/null; then rm -f /worktrees/.smoke-$$; pass "/worktrees writable"; else bad "/worktrees not writable"; fi
+if [ -L /worktrees ]; then
+  check_eq "/worktrees symlink" /workspace/repos "$(readlink /worktrees)"
 else
-  bad "missing /worktrees"
+  bad "/worktrees must be a symlink to /workspace/repos"
 fi
 check "locale: en_US.utf8" bash -c "locale -a | grep -qi en_US"
 
@@ -1390,11 +1469,44 @@ for d in "$HOME/.local/share/opencode" "$HOME/.local/state/opencode" \
     bad "missing dir: $d"
   fi
 done
-if [ -d /worktrees ]; then
-  check_eq "owner: /worktrees" developer "$(stat -c '%U' /worktrees)"
-  if touch /worktrees/.smoke-$$ 2>/dev/null; then rm -f /worktrees/.smoke-$$; pass "/worktrees writable"; else bad "/worktrees not writable"; fi
+if [ -d /workspace/repos ]; then
+  check_eq "owner: /workspace/repos" developer "$(stat -c '%U' /workspace/repos)"
+  if touch /workspace/repos/.smoke-$$ 2>/dev/null; then rm -f /workspace/repos/.smoke-$$; pass "/workspace/repos writable"; else bad "/workspace/repos not writable"; fi
 else
-  bad "missing /worktrees"
+  bad "missing /workspace/repos"
+fi
+if [ -L /worktrees ]; then
+  check_eq "/worktrees symlink" /workspace/repos "$(readlink /worktrees)"
+else
+  bad "/worktrees must be a symlink to /workspace/repos"
+fi
+
+test_root="$(mktemp -d)"
+if [ -d /workspace/test-remote.git ]; then
+  if REPO_ROOT="$test_root" repo clone "file:///workspace/test-remote.git" >"$test_root/clone.log" 2>&1; then
+    pass "repo clone: local remote"
+  else
+    bad "repo clone: local remote"
+    sed -n '1,40p' "$test_root/clone.log" >&2 || true
+  fi
+  clone_dir="$test_root/local/test-remote"
+  check "repo clone: checkout exists" test -d "$clone_dir"
+  if [ -d "$clone_dir" ]; then
+    if ( cd "$clone_dir" && REPO_ROOT="$test_root" repo worktree smoke-wt smoke-branch ) >"$test_root/worktree.log" 2>&1; then
+      pass "repo worktree: created"
+    else
+      bad "repo worktree: created"
+      sed -n '1,40p' "$test_root/worktree.log" >&2 || true
+    fi
+    worktree_dir="$test_root/.worktrees/local/test-remote/smoke-wt"
+    check "repo worktree: path exists" test -d "$worktree_dir"
+    if [ -d "$worktree_dir" ]; then
+      git -C "$clone_dir" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || rm -rf "$worktree_dir"
+    fi
+  fi
+  rm -rf "$test_root"
+else
+  bad "hermetic repo remote missing"
 fi
 
 check "bashrc: kubectl aliases" grep -q '# --- kubectl aliases ---' "$HOME/.bashrc"
