@@ -1,0 +1,33 @@
+This repository includes third-party writing material:
+
+technical-writer
+  Source: https://github.com/riekelt/technical-writer
+  Copyright (c) 2026 riekelt
+  License: MIT
+  Vendored at commit 85e53729dd959a2795d593d6769068e342cf3486.
+  See .opencode/skills/technical-writer/LICENSE.
+
+The Elements of Style (1918)
+  Author: William Strunk Jr.
+  Source: https://github.com/obra/the-elements-of-style
+  Text source: Project Gutenberg #37134
+  License: Public domain
+  Vendored at commit 05fc4f0d2b97b7c042dd9949ad658568e4a1324e.
+  See .opencode/skills/elements-of-style/UPSTREAM.md.
+
+Excalidraw diagram guidance
+  Source: https://github.com/github/awesome-copilot/tree/main/skills/excalidraw-diagram-generator
+  Copyright GitHub, Inc.
+  License: MIT
+  Adapted into .opencode/skills/diagramming-processes.
+  Vendored at commit a06ba06d11f41b996f8c246e2a452e1bf3a17950.
+
+@excalidraw/cli 0.3.0
+  Source: https://github.com/excalidraw/cli
+  License: MIT
+  Used by scripts/render-excalidraw.sh; not vendored.
+
+Mozilla Firefox ESR
+  Source: Debian package firefox-esr
+  License: MPL-2.0
+  Installed in the image for headless Excalidraw rendering.
