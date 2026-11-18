@@ -155,15 +155,30 @@ labels short; if the label does not fit, widen the box or split the step. A
 shape with a `text` property and no bound text element renders as an unlabeled
 box, which is a failure.
 
+Arrow labels use the same mechanism with the arrow as the container: the
+arrow's `boundElements` lists `{ "type": "text", "id": "<label-id>" }`, and the
+text element has `containerId: "<arrow-id>"` and `labelPosition: 0.5`. Bind the
+label to the arrow; the renderer reserves a gap in the line for it. All three
+templates bind their arrow labels: the flowchart's `yes` and `no`, the
+sequence's `request`, `query`, `result`, and `response`, and the swimlane's
+`submit`, `resolve`, and `confirm`.
+
 ### Arrows and bindings
 
-- Give each arrow a unique `id`, `points` starting at `[0, 0]`, and
-  `startBinding` and `endBinding` when the arrow touches a box.
-- Keep arrows out of boxes; bind them to the box edges.
-- Put the label on the arrow as a separate `text` element near the arrow for
-  predictable rendering. If you use an arrow `label` object, verify the render.
+- Give each arrow a unique `id` and `points` starting at `[0, 0]`.
+- Bind every arrow that touches a shape with `startBinding` and `endBinding`.
+  Include `elementId`, `mode: "orbit"`, and a `fixedPoint` at the edge, or use
+  `focus` and `gap`. An arrow drawn near a shape without a binding looks
+  connected but is not; it will not move with the shape.
+- Bind the arrow label to the arrow. Add
+  `boundElements: [{ "type": "text", "id": "<label-id>" }]` to the arrow,
+  create a `text` element with `containerId: "<arrow-id>"`,
+  `labelPosition: 0.5`, and `textAlign: "center"`. The label then moves and
+  rotates with the arrow, and the renderer reserves a gap in the line for it.
 - Use straight arrows for simple flows and a small number of bends for crossing
   lanes. Do not route arrows through unrelated boxes.
+- The flowchart template is the canonical example: every arrow has a start and
+  end binding, and the `yes` and `no` labels are bound text on their arrows.
 
 ### Style
 
@@ -184,8 +199,13 @@ box, which is a failure.
 - [ ] The file is valid JSON with `type: "excalidraw"`, `version: 2`,
   `elements`, `appState`, and `files`.
 - [ ] Every element has a unique `id`.
-- [ ] Every label is a separate `text` element with `containerId` and a
-  matching `boundElements` entry. No shape has a `text` property.
+- [ ] Every shape label is a separate `text` element. Bind it with
+  `containerId` and a matching `boundElements` entry when the shape may move;
+  standalone text is acceptable only when it sits inside a fixed shape.
+- [ ] Every arrow that touches a shape has `startBinding` and `endBinding`.
+- [ ] Every arrow label has `containerId` set to the arrow, and the arrow's
+  `boundElements` lists it.
+- [ ] No shape has a `text` property.
 - [ ] All text uses `fontFamily: 5` and a readable `fontSize`.
 - [ ] Boxes do not overlap; arrows do not cross labels.
 - [ ] Colors follow the palette; exception paths are distinguishable.

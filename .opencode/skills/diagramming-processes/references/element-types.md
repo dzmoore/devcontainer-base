@@ -60,13 +60,20 @@ label fits.
 - Solid arrows for commands and forward flow.
 - Label the arrow with the event or condition, in the domain's language.
 - Keep arrow labels outside boxes and off other arrows.
+- Bind the arrow to the shapes it touches. An arrow near a shape without a
+  binding is not connected.
+- Bind the label to the arrow; the renderer reserves a gap in the line for it.
 
 Arrow binding:
 
 ```json
-"startBinding": { "elementId": "step-receive", "focus": 0, "gap": 4 },
-"endBinding": { "elementId": "step-validate", "focus": 0, "gap": 4 }
+"startBinding": { "elementId": "step-receive", "mode": "orbit",
+                  "fixedPoint": [1, 0.5] },
+"endBinding": { "elementId": "step-validate", "mode": "orbit",
+                "fixedPoint": [0, 0.5] }
 ```
+
+The `focus` and `gap` form is also accepted.
 
 ## Text
 
@@ -82,7 +89,8 @@ Arrow binding:
 - Actor boxes across the top, each with a bound label.
 - A dashed `line` lifeline from each actor box downward.
 - Arrows between lifelines, ordered top to bottom.
-- Message labels as separate `text` elements above the arrows.
+- Message labels as `text` elements bound to their arrows with `containerId`
+  and `labelPosition: 0.5`.
 - Activation bars as narrow rectangles on a lifeline when the protocol matters.
 - Time flows from top to bottom; do not route a message backward in time unless
   the protocol does.
@@ -93,8 +101,8 @@ Arrow binding:
   fill.
 - A header box at the top of each lane with the actor name.
 - Process boxes inside the lane that owns the step.
-- Handoff arrows cross from one lane to the next; label the handoff with the
-  event.
+- Handoff arrows cross from one lane to the next; bind each handoff arrow to its
+  source and target boxes, and bind its label to the arrow.
 - Keep lane widths equal and lane headers aligned to the same baseline.
 - Put the start terminal in the lane that initiates the process.
 

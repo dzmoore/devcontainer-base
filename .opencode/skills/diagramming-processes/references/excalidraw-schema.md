@@ -137,9 +137,24 @@ An arrow has:
 ```
 
 `points` are relative to the arrow's `x` and `y`. Keep the first point at
-`[0, 0]`. Bindings are optional for rendering, but they keep the arrow attached
-when the source is edited in Excalidraw. Use `strokeStyle: "dashed"` for
-returns, responses, and asynchronous messages.
+`[0, 0]`. An arrow that touches a shape needs `startBinding` and `endBinding`;
+use `mode: "orbit"` with a `fixedPoint` at the edge, or `focus` and `gap`. An
+unbound arrow looks connected but will not move with the shape. A sequence
+message that marks a time position on a lifeline may use a precise unbound
+arrow. Use `strokeStyle: "dashed"` for returns, responses, and asynchronous
+messages.
+
+An arrow label is a `text` element bound to the arrow:
+
+1. The arrow's `boundElements` lists
+   `{ "type": "text", "id": "edge-label" }`.
+2. The text element has `containerId: "edge-receive-to-validate"`,
+   `labelPosition: 0.5`, `textAlign: "center"`, and `fontFamily: 5`.
+3. The text follows the arrow in the `elements` array.
+
+Bind the label to the arrow; the renderer reserves a gap in the line for it.
+All three templates show the pattern: the flowchart's `yes` and `no`, the
+sequence's message labels, and the swimlane's handoff labels.
 
 ## Fonts
 
@@ -172,10 +187,14 @@ diagram.
 - [ ] Valid JSON.
 - [ ] `type: "excalidraw"`, `version: 2`, `elements`, `appState`, `files`.
 - [ ] Unique IDs.
-- [ ] Every container label has a bound `text` element with `containerId`.
+- [ ] Every shape label is a separate `text` element. Bind it with `containerId`
+  when the shape may move; standalone text is acceptable only inside a fixed
+  shape.
 - [ ] No shape uses a `text` property.
 - [ ] All text uses `fontFamily: 5`.
-- [ ] Arrows have `points`; bound arrows have matching `startBinding` and
-  `endBinding`.
+- [ ] Arrows have `points`; arrows that touch a shape have matching
+  `startBinding` and `endBinding`.
+- [ ] Every arrow label has `containerId` set to the arrow, and the arrow's
+  `boundElements` lists the text.
 - [ ] Colors follow the palette.
 - [ ] The render shows every label.

@@ -371,6 +371,51 @@ for png in ('flowchart.png', 'sequence.png', 'swimlane.png'):
     path = diagram_skill / 'templates' / png
     check(path.is_file() and path.stat().st_size > 1000,
           f'diagramming-processes missing render {png}')
+
+flowchart = diagram_skill / 'templates' / 'flowchart.excalidraw'
+if flowchart.is_file():
+    data = json.loads(flowchart.read_text())
+    elements = {e['id']: e for e in data.get('elements', [])}
+    arrows = [e for e in elements.values() if e.get('type') == 'arrow']
+    check(len(arrows) >= 3, 'flowchart must have arrows')
+    for arrow in arrows:
+        start = arrow.get('startBinding') or {}
+        end = arrow.get('endBinding') or {}
+        check(start.get('elementId'),
+              f'flowchart arrow {arrow["id"]} missing start binding')
+        check(end.get('elementId'),
+              f'flowchart arrow {arrow["id"]} missing end binding')
+
+swimlane = diagram_skill / 'templates' / 'swimlane.excalidraw'
+if swimlane.is_file():
+    swimlane_data = json.loads(swimlane.read_text())
+    for element in swimlane_data.get('elements', []):
+        if element.get('type') == 'arrow':
+            start = element.get('startBinding') or {}
+            end = element.get('endBinding') or {}
+            check(start.get('elementId') and end.get('elementId'),
+                  f'swimlane arrow {element["id"]} missing a shape binding')
+
+for template, minimum in (('flowchart', 2), ('sequence', 4), ('swimlane', 3)):
+    path = diagram_skill / 'templates' / f'{template}.excalidraw'
+    if not path.is_file():
+        continue
+    template_data = json.loads(path.read_text())
+    active = [e for e in template_data.get('elements', [])
+              if not e.get('isDeleted')]
+    by_id = {e['id']: e for e in active}
+    arrow_ids = {e['id'] for e in active if e.get('type') == 'arrow'}
+    for arrow in (e for e in active if e.get('type') == 'arrow'):
+        for bound in arrow.get('boundElements') or []:
+            if bound.get('type') == 'text':
+                label = by_id.get(bound.get('id'))
+                check(label is not None and label.get('containerId') == arrow['id'],
+                      f'{template} arrow label {bound.get("id")} not bound to {arrow["id"]}')
+    arrow_labels = [e for e in active if e.get('type') == 'text'
+                    and e.get('containerId') in arrow_ids]
+    check(len(arrow_labels) >= minimum,
+          f'{template} must bind at least {minimum} arrow labels')
+
 if (diagram_skill / 'SKILL.md').is_file():
     diagram_text = (diagram_skill / 'SKILL.md').read_text()
     for marker in ('Excalidraw is the only diagram tool', 'fontFamily: 5',
