@@ -20,6 +20,21 @@ index d39c1ec..4e130bb 100644
  - Invoke a skill → OpenCode's native \`skill\` tool. Skill ids are bare names, so drop the \`superpowers:\` prefix skills use when they name each other (\`superpowers:brainstorming\` → \`skill\` with \`id: "brainstorming"\`)
  - Read files → \`read\`
  - Create, edit, or delete files → use \`patch\` with \`patchText\` when available; otherwise use \`write\` to create or overwrite files, \`edit\` for targeted changes, and \`shell\` for deletion
+diff --git a/skills/brainstorming/builder-check-prompt.md b/skills/brainstorming/builder-check-prompt.md
+index 136e9c1..cfbb934 100644
+--- a/skills/brainstorming/builder-check-prompt.md
++++ b/skills/brainstorming/builder-check-prompt.md
+@@ -1,7 +1,8 @@
+ # Builder Check Prompt
+
+-Dispatch a fresh general-purpose subagent with this prompt once the
+-written design exists. Fill in the domain and the document path.
++Dispatch a fresh `design` worker with this prompt once the written design
++exists; use `rubber-duck` instead when the goal is an adversarial critique.
++Fill in the domain and the document path.
+
+ ```
+ You are a talented [DOMAIN, e.g. "software engineer", "event planner",
 diff --git a/skills/dispatching-parallel-agents/SKILL.md b/skills/dispatching-parallel-agents/SKILL.md
 index 3fa091b..02e409e 100644
 --- a/skills/dispatching-parallel-agents/SKILL.md

@@ -1,7 +1,8 @@
 # Builder Check Prompt
 
-Dispatch a fresh general-purpose subagent with this prompt once the
-written design exists. Fill in the domain and the document path.
+Dispatch a fresh `design` worker with this prompt once the written design
+exists; use `rubber-duck` instead when the goal is an adversarial critique.
+Fill in the domain and the document path.
 
 ```
 You are a talented [DOMAIN, e.g. "software engineer", "event planner",

@@ -19,8 +19,8 @@ applies it before the tree is copied. It:
 - maps the subagent-driven-development templates to the named implementer and
   validator agents, removes per-dispatch model selection, and states that agent
   files own model selection; and
-- maps the injected V1 and V2 tool guidance and the code-review and parallel
-  dispatch skills to named control-plane agents, and forbids dispatching
-  general.
+- maps the injected V1 and V2 tool guidance, the code-review and parallel
+  dispatch skills, and the brainstorming builder check to named control-plane
+  agents, and forbids dispatching general.
 
 Verify the tree with scripts/update-superpowers.sh --check.

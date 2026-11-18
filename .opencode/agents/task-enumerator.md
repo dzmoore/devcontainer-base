@@ -45,6 +45,12 @@ permissions:
   - action: "session_*"
     resource: "*"
     effect: deny
+  - action: "parallel-search_*"
+    resource: "*"
+    effect: deny
+  - action: "brave-search-mcp-server_*"
+    resource: "*"
+    effect: deny
 ---
 
 # Task enumerator

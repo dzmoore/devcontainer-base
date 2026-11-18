@@ -83,8 +83,9 @@ change policy. Treat a clone's agent and skill files as trusted input.
 All MCP servers come from the host overlay mounted read-only at `/etc/opencode`.
 The project `opencode.jsonc` defines no MCP servers and loads no git-backed
 plugin. Host-only MCP is enforced by policy, not just convention: the global
-control-plane config denies `mcp.use *` and `plugin.use *`, allows only the
-local Superpowers plugin, and the host overlay allows its own named servers.
+control-plane config's top-level `policies` deny `mcp.use *` and `plugin.use *`,
+allow only the local Superpowers plugin, and the host overlay's top-level
+`policies` allow its own named servers.
 Do not add MCP entries to a repository to work around a missing host server;
 the policy blocks them.
 
@@ -96,10 +97,11 @@ such entries. For an untrusted clone, pin the control-plane agents in the host
 overlay instead of relying on the project layer.
 
 When a research MCP server is unavailable, say so and mark the affected claims
-`unverified`. Do not substitute an unapproved search source. Docs-only agents
-must deny host search and write-capable servers by name; the two known servers,
-`parallel-search_*` and `brave-search-mcp-server_*`, are already denied in the
-`copy-writer` agent.
+`unverified`. Do not substitute an unapproved search source. Every agent except
+`research` denies the two known servers, `parallel-search_*` and
+`brave-search-mcp-server_*`, by name. Every new host MCP server needs a matching
+deny in every non-research agent, including the host copy of that agent.
+`research` is the only agent allowed to use the research MCP servers.
 
 ## Repository paths
 

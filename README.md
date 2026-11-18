@@ -392,8 +392,9 @@ but their links, commands, and claims must still be checked.
 All MCP servers come from a host-owned overlay mounted read-only at
 `/etc/opencode`. The project `opencode.jsonc` defines no MCP servers.
 Host-only MCP is enforced by policy, not just convention: the global
-control-plane config denies `mcp.use *` and `plugin.use *`, allows only the
-local Superpowers plugin, and the host overlay allows its own named servers.
+control-plane config's top-level `policies` deny `mcp.use *` and `plugin.use *`,
+allow only the local Superpowers plugin, and the host overlay's top-level
+`policies` allow its own named servers.
 A clone can still add `opencode.json` or `.opencode/` agents and skills.
 Project MCP servers and plugins are blocked by that policy, but clone agent
 and skill definitions are trusted input: a cloned repository can shadow the
@@ -436,12 +437,13 @@ file is missing, unreadable, or empty. Do not print or log secret values.
 > so review it like code. A repository without the host overlay has no MCP
 > servers, including no research MCP servers.
 
-Docs-only agents such as `copy-writer` must deny every host search or
-write-capable MCP server. The base agent denies the two known servers,
-`parallel-search_*` and `brave-search-mcp-server_*`. If the host adds another
-such server, append a deny rule to the host copy at
-`~/.devcontainer/opencode/agents/copy-writer.md`; permission rules append to the
-base rules.
+Docs-only and read-only agents must deny every host search or write-capable MCP
+server. Every agent except `research` denies the two known servers,
+`parallel-search_*` and `brave-search-mcp-server_*`. Every new host MCP server
+needs a matching deny in every non-research agent; append it to the host copy at
+`~/.devcontainer/opencode/agents/<agent>.md` as well as the repository agent
+files. Permission rules append to the base rules. `research` is the only agent
+allowed to use the research MCP servers.
 
 ### GitHub App tokens
 

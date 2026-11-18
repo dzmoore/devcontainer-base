@@ -3,7 +3,7 @@
   "default_agent": "orchestrator",
   "model": "opencode-go/deepseek-v4.1-flash",
   "plugins": ["/workspace/.opencode/superpowers"],
-  "permissions": [
+  "policies": [
     { "action": "mcp.use", "resource": "*", "effect": "deny" },
     { "action": "plugin.use", "resource": "*", "effect": "deny" },
     { "action": "plugin.use", "resource": "/workspace/.opencode/superpowers", "effect": "allow" }

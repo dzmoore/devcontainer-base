@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT="${REPO_ROOT:-/workspace/repos}"
 GITHUB_ENV_FILE="${GITHUB_APP_ENV_FILE:-${GITHUB_ENV_FILE:-$HOME/.dc/github/.env}}"
+export GITHUB_APP_ENV_FILE="$GITHUB_ENV_FILE"
 GITHUB_SERVER="${GITHUB_SERVER_URL:-https://github.com}"
 GITHUB_SERVER="${GITHUB_SERVER%/}"
 BIN_DIR="$(cd "$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)"
@@ -87,7 +88,8 @@ ensure_under() {
 
 warn_clone_config() {
   local dest="$1" file
-  for file in "$dest/opencode.json" "$dest/opencode.jsonc"; do
+  for file in "$dest/opencode.json" "$dest/opencode.jsonc" \
+      "$dest/.opencode/opencode.json" "$dest/.opencode/opencode.jsonc"; do
     if [ -f "$file" ] && grep -Eq '"(mcp|plugins|agents|skills)"' "$file"; then
       printf 'repo: warning: %s configures project MCP, plugins, agents, or skills; project MCP and plugins are blocked, and clone agent/skill definitions are trusted input\n' "$file" >&2
     fi

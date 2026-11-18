@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "permissions": [
+  "policies": [
     { "action": "mcp.use", "resource": "parallel-search", "effect": "allow" },
     { "action": "mcp.use", "resource": "brave-search-mcp-server", "effect": "allow" }
   ],

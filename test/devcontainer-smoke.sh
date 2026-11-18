@@ -120,20 +120,63 @@ ENV
   cat >"$COPY/host-opencode/opencode.json" <<'JSON'
 {
   "$schema": "https://opencode.ai/config.json",
-  "permissions": [
-    { "action": "mcp.use", "resource": "probe-disabled", "effect": "allow" }
+  "policies": [
+    { "action": "mcp.use", "resource": "probe-enabled", "effect": "allow" }
   ],
   "mcp": {
     "servers": {
-      "probe-disabled": {
+      "probe-enabled": {
         "type": "local",
         "command": ["true"],
-        "disabled": true
+        "enabled": true
       }
     }
   }
 }
 JSON
+  cat >"$COPY/opencode.jsonc" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "project-probe": {
+        "type": "local",
+        "command": ["true"],
+        "enabled": true
+      }
+    }
+  }
+}
+JSON
+  mkdir -p "$COPY/.opencode/plugins"
+  cat >"$COPY/.opencode/plugins/project-probe.js" <<'JS'
+import fs from 'node:fs';
+
+fs.writeFileSync('/tmp/project-plugin-loaded', 'loaded\n');
+
+export default {
+  id: 'project-probe',
+  setup() {
+    fs.writeFileSync('/tmp/project-plugin-ran', 'ran\n');
+  },
+};
+JS
+  rm -f /tmp/project-plugin-ran /tmp/project-plugin-loaded
+  python3 - "$COPY/.devcontainer/devcontainer.json" "$COPY" <<'PY'
+import json, sys
+path, copy = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    data = json.load(f)
+raw = json.dumps(data)
+assert '${localEnv:HOME}' not in raw, 'disposable devcontainer still uses ${localEnv:HOME}'
+for mount in data.get('mounts', []):
+    parts = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
+    if parts.get('type') != 'bind':
+        continue
+    source = parts.get('source') or parts.get('src')
+    assert source, f'bind mount missing source: {mount}'
+    assert source.startswith(copy + '/'), f'bind source outside disposable copy: {source}'
+PY
   cat >"$COPY/host-opencode/agents/research.md" <<'MD'
 ---
 description: Host test research override
@@ -320,26 +363,30 @@ if global_path.is_file():
     check(g.get('agents', {}).get('plan', {}).get('disabled') is True, 'plan must be disabled')
     check('/workspace/.opencode/AGENTS.md' in g.get('instructions', []), 'AGENTS.md instruction missing')
     global_perms = g.get('permissions', [])
-    def has_global_perm(action, resource, effect):
+    global_policies = g.get('policies', [])
+    def has_global_policy(action, resource, effect):
         return any(
             rule.get('action') == action
             and rule.get('resource') == resource
             and rule.get('effect') == effect
-            for rule in global_perms)
-    check(has_global_perm('mcp.use', '*', 'deny'),
-          'global config must deny mcp.use *')
-    check(has_global_perm('plugin.use', '*', 'deny'),
-          'global config must deny plugin.use *')
-    check(has_global_perm('plugin.use', '/workspace/.opencode/superpowers', 'allow'),
-          'global config must allow the local Superpowers plugin')
-    if global_perms:
-        deny_index = global_perms.index({'action': 'plugin.use', 'resource': '*', 'effect': 'deny'}) \
-            if {'action': 'plugin.use', 'resource': '*', 'effect': 'deny'} in global_perms else -1
-        allow_index = global_perms.index(
-            {'action': 'plugin.use', 'resource': '/workspace/.opencode/superpowers', 'effect': 'allow'}) \
-            if {'action': 'plugin.use', 'resource': '/workspace/.opencode/superpowers', 'effect': 'allow'} in global_perms else -1
+            for rule in global_policies)
+    check(has_global_policy('mcp.use', '*', 'deny'),
+          'global config must deny mcp.use * in policies')
+    check(has_global_policy('plugin.use', '*', 'deny'),
+          'global config must deny plugin.use * in policies')
+    check(has_global_policy('plugin.use', '/workspace/.opencode/superpowers', 'allow'),
+          'global config must allow the local Superpowers plugin in policies')
+    for action in ('mcp.use', 'plugin.use'):
+        check(not any(rule.get('action') == action for rule in global_perms),
+              f'global config must not put {action} under permissions')
+    if global_policies:
+        deny = {'action': 'plugin.use', 'resource': '*', 'effect': 'deny'}
+        allow = {'action': 'plugin.use', 'resource': '/workspace/.opencode/superpowers',
+                 'effect': 'allow'}
+        deny_index = global_policies.index(deny) if deny in global_policies else -1
+        allow_index = global_policies.index(allow) if allow in global_policies else -1
         check(deny_index != -1 and allow_index > deny_index,
-              'global plugin allow must follow the plugin deny')
+              'global plugin allow must follow the plugin deny in policies')
 
 project = json.loads(opencode_path.read_text()) if opencode_path.is_file() else {}
 check('plugins' not in project, 'opencode.jsonc must not load a plugin')
@@ -412,7 +459,8 @@ if plugin_path.is_file():
     check('named control-plane agent' in plugin_text,
           'Superpowers mapping must name the control-plane agent')
 for rel, agent in (('requesting-code-review/SKILL.md', 'validator'),
-                   ('dispatching-parallel-agents/SKILL.md', 'implementer')):
+                   ('dispatching-parallel-agents/SKILL.md', 'implementer'),
+                   ('brainstorming/builder-check-prompt.md', 'design')):
     path = repo / '.opencode' / 'superpowers' / 'skills' / rel
     check(path.is_file(), f'vendored {rel} missing')
     if path.is_file():
@@ -432,6 +480,8 @@ check('Neither the\norchestrator nor an implementer may approve its own exceptio
       'AGENTS.md must require explicit user approval for TDD exceptions')
 check('Read-only is a guardrail, not a sandbox' in agents_text,
       'AGENTS.md must say read-only is a guardrail, not a sandbox')
+check('new host MCP server' in agents_text and 'non-research agent' in agents_text,
+      'AGENTS.md must say every new host MCP needs a deny in every non-research agent')
 check('The plugin skips child sessions' in agents_text,
       'AGENTS.md must explain the worker bootstrap without a false plugin rationale')
 check('# --- opencode control plane ---' in (repo / '.devcontainer/post-create.sh').read_text(),
@@ -661,6 +711,8 @@ if readme_path.is_file():
           'README.md must pin the Brave MCP package')
     check('a guardrail, not a sandbox' in readme_text,
           'README.md must say read-only is a guardrail, not a sandbox')
+    check('new host MCP server' in readme_text and 'non-research agent' in readme_text,
+          'README.md must say every new host MCP needs a deny in every non-research agent')
     check('Three read-only bind mounts' in readme_text,
           'README.md must not claim only two read-only bind mounts')
     check('`/etc/opencode` to be mounted and read-only' in readme_text,
@@ -800,12 +852,16 @@ if example_config.is_file():
               f'host overlay example must define {server}')
     example = json.loads(example_text)
     example_perms = example.get('permissions', [])
+    example_policies = example.get('policies', [])
     for server in ('parallel-search', 'brave-search-mcp-server'):
         check(any(rule.get('action') == 'mcp.use'
                   and rule.get('resource') == server
                   and rule.get('effect') == 'allow'
+                  for rule in example_policies),
+              f'host overlay example must allow mcp.use {server} in policies')
+    check(not any(rule.get('action') in ('mcp.use', 'plugin.use')
                   for rule in example_perms),
-              f'host overlay example must allow mcp.use {server}')
+          'host overlay example must not put mcp.use/plugin.use under permissions')
     brave = example.get('mcp', {}).get('servers', {}).get('brave-search-mcp-server', {})
     check('@brave/brave-search-mcp-server@2.1.5' in brave.get('command', []),
           'host overlay example must pin @brave/brave-search-mcp-server@2.1.5')
@@ -820,23 +876,25 @@ overlay_heredoc = re.search(
 check(overlay_heredoc is not None, 'hermetic host overlay heredoc missing')
 if overlay_heredoc:
     heredoc = overlay_heredoc.group(1)
-    check('"disabled": true' in heredoc,
-          'hermetic host overlay probe must use "disabled": true')
-    check('"enabled":' not in heredoc,
-          'hermetic host overlay probe must not use "enabled":')
+    check('"enabled": true' in heredoc,
+          'hermetic host overlay probe must be enabled so it can be listed')
     overlay_json = json.loads(heredoc)
     overlay_perms = overlay_json.get('permissions', [])
+    overlay_policies = overlay_json.get('policies', [])
     check(any(rule.get('action') == 'mcp.use'
-              and rule.get('resource') == 'probe-disabled'
+              and rule.get('resource') == 'probe-enabled'
               and rule.get('effect') == 'allow'
-              for rule in overlay_perms),
-          'hermetic host overlay must allow mcp.use probe-disabled')
+              for rule in overlay_policies),
+          'hermetic host overlay must allow mcp.use probe-enabled in policies')
+    check(not any(rule.get('action') in ('mcp.use', 'plugin.use')
+                  for rule in overlay_perms),
+          'hermetic host overlay must not put mcp.use/plugin.use under permissions')
 run_smoke_pos = smoke_text.find('\nrun_smoke() {')
 smoke_body = smoke_text[run_smoke_pos:] if run_smoke_pos != -1 else ''
 marker_pos = smoke_body.find('/workspace/.dc-smoke-prefix')
 guard_pos = smoke_body.find('if [ "$hermetic" -eq 1 ]')
 desc_pos = smoke_body.find('Host test research override')
-probe_pos = smoke_body.find('check "host overlay: probe-disabled listed"')
+probe_pos = smoke_body.find('check "host overlay: probe-enabled listed"')
 gate_end_pos = smoke_body.find('check "host overlay: /etc/opencode read-only"')
 repo_clone_pos = smoke_body.find('repo clone: local remote')
 repo_worktree_pos = smoke_body.find('repo worktree: path exists')
@@ -850,7 +908,15 @@ for marker in ("research.get('system'", 'Host test research override body',
     check(marker in smoke_body,
           f'host override test must assert {marker!r}')
 check(guard_pos != -1 and probe_pos > guard_pos,
-      'probe-disabled assertion must be inside the hermetic gate')
+      'probe-enabled assertion must be inside the hermetic gate')
+for marker in ('project-probe', 'project-plugin-ran', 'project-plugin-loaded'):
+    check(marker in smoke_body,
+          f'run_smoke must assert the project probe deny {marker!r}')
+for marker in ('invalid fork owner', 'invalid pull request number'):
+    check(marker in smoke_body,
+          f'run_smoke must assert the C1 validation message {marker!r}')
+check('|| die "cannot create agents temp file"' not in smoke_body,
+      'run_smoke must not call the undefined die helper inside the container')
 check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_clone_pos < gate_end_pos,
       'repo clone test must be inside the disposable-copy gate')
 check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_worktree_pos < gate_end_pos,
@@ -876,12 +942,10 @@ if copy_body:
           'prepare_copy rsync must exclude repos/')
     check('--exclude repos' in tar_line,
           'prepare_copy tar fallback must exclude repos/')
-    check('${localEnv:HOME}' not in copy_body,
-          'prepare_copy must not leave ${localEnv:HOME} bind mounts in the copy')
-    check("target == '/home/developer/.dc/github'" in copy_body,
-          'prepare_copy must rewrite the GitHub credential mount')
-    check("target == '/home/developer/.dc/brave/.env'" in copy_body,
-          'prepare_copy must rewrite the Brave credential mount')
+    for marker in ("parts.get('source')", "assert '${localEnv:HOME}' not in",
+                   'source.startswith(copy'):
+        check(marker in copy_body,
+              f'prepare_copy must parse the rewritten devcontainer with {marker!r}')
     check('$COPY/host-github' in copy_body,
           'prepare_copy must create a disposable GitHub fixture')
     check('$COPY/host-brave.env' in copy_body,
@@ -1061,7 +1125,9 @@ if repo_helper.is_file():
         check(marker in repo_text, f'repo helper must contain {marker!r}')
     for marker in ('validate_component', 'validate_slug', 'ensure_under',
                    'ensure_root', 'realpath -m', 'warn_clone_config',
-                   'readlink -f', 'GITHUB_APP_ENV_FILE'):
+                   'readlink -f', 'GITHUB_APP_ENV_FILE',
+                   'export GITHUB_APP_ENV_FILE',
+                   'opencode/opencode.json'):
         check(marker in repo_text,
               f'repo helper must validate paths and env with {marker!r}')
     for marker in ('repo worktree ../escape', 'repo fork upstream/repo ..',
@@ -1301,7 +1367,8 @@ for name in read_only:
     check(has_rule(rules, 'subagent', '*', 'deny'),
           f'{name} must deny subagent *')
     for action in ('execute', 'webfetch', 'websearch', 'external_directory',
-                   'opencode_*', 'worktree_*', 'session_*'):
+                   'opencode_*', 'worktree_*', 'session_*',
+                   'parallel-search_*', 'brave-search-mcp-server_*'):
         check(has_rule(rules, action, '*', 'deny'),
               f'{name} must deny {action} *')
 
@@ -1644,8 +1711,8 @@ check "run: glow" glow --version
 check "run: glow version" bash -c "glow --version | grep -qF '${glow_expected#v}'"
 check "run: glow pager" bash -c 'printf "# pager\n" >/tmp/glow-pager.md && env -u PAGER glow /tmp/glow-pager.md --pager </dev/null >/dev/null && rm -f /tmp/glow-pager.md'
 check "run: opencode" opencode --version
-agents_file="$(mktemp)" || die "cannot create agents temp file"
-agents_err="$(mktemp)" || die "cannot create agents error file"
+agents_file="$(mktemp)" || { printf 'FAIL: cannot create agents temp file\n' >&2; exit 1; }
+agents_err="$(mktemp)" || { printf 'FAIL: cannot create agents error file\n' >&2; exit 1; }
 if ! opencode --standalone debug agents >"$agents_file" 2>"$agents_err"; then
   bad "control-plane agents: debug agents failed"
   sed -n '1,40p' "$agents_err" >&2 || true
@@ -1715,14 +1782,14 @@ PY
   mcp_listed=0
   for _ in $(seq 1 15); do
     if opencode mcp list >"$HOME/.mcp-list.txt" 2>&1 \
-        && grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"; then
+        && grep -qF 'probe-enabled' "$HOME/.mcp-list.txt"; then
       mcp_listed=1
       break
     fi
     sleep 1
   done
   if [ "$mcp_listed" -eq 1 ]; then
-    check "host overlay: probe-disabled listed" grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"
+    check "host overlay: probe-enabled listed" grep -qF 'probe-enabled' "$HOME/.mcp-list.txt"
     if [ -f /etc/opencode/opencode.json ]; then
       for server in parallel-search brave-search-mcp-server; do
         if grep -qF "\"$server\"" /etc/opencode/opencode.json; then
@@ -1731,9 +1798,13 @@ PY
       done
     fi
   else
-    check "host overlay: probe-disabled listed" grep -qF 'probe-disabled' "$HOME/.mcp-list.txt"
+    check "host overlay: probe-enabled listed" grep -qF 'probe-enabled' "$HOME/.mcp-list.txt"
     sed -n '1,40p' "$HOME/.mcp-list.txt" >&2 || true
   fi
+  check "host overlay: project-probe denied" bash -c \
+    '! grep -qF "project-probe" "$HOME/.mcp-list.txt"'
+  check "host overlay: project plugin denied" test ! -e /tmp/project-plugin-ran
+  check "host overlay: project plugin module denied" test ! -e /tmp/project-plugin-loaded
   test_root="$(mktemp -d)"
   if [ -d /workspace/test-remote.git ]; then
     if REPO_ROOT="$test_root" repo clone "file:///workspace/test-remote.git" >"$test_root/clone.log" 2>&1; then
@@ -1792,6 +1863,7 @@ PY
         bad "repo worktree: rejects traversal"
       else
         pass "repo worktree: rejects traversal"
+        check "repo worktree: traversal message" grep -qF 'invalid worktree name' "$test_root/worktree-escape.log"
       fi
       check "repo worktree: traversal creates nothing" test ! -e "$test_root/.worktrees/local/escape"
       check "repo worktree: traversal creates no sibling" test ! -e "$test_root/escape"
@@ -1800,13 +1872,16 @@ PY
         bad "repo fork: rejects traversal"
       else
         pass "repo fork: rejects traversal"
+        check "repo fork: traversal message" grep -qF 'invalid fork owner' "$test_root/fork-escape.log"
       fi
       check "repo fork: traversal creates nothing" test ! -e "$test_root/repo"
+      check "repo fork: traversal creates no parent sibling" test ! -e "$test_root/../repo"
       if ( cd "$test_root" && REPO_ROOT="$test_root" repo clone ../repo ) \
           >"$test_root/clone-escape.log" 2>&1; then
         bad "repo clone: rejects traversal"
       else
         pass "repo clone: rejects traversal"
+        check "repo clone: traversal message" grep -qF "clone source must not contain" "$test_root/clone-escape.log"
       fi
       check "repo clone: traversal creates nothing" test ! -e "$test_root/local/repo"
       if ( cd "$clone_dir" && REPO_ROOT="$test_root" repo pr --detach ) \
@@ -1814,6 +1889,7 @@ PY
         bad "repo pr: rejects option injection"
       else
         pass "repo pr: rejects option injection"
+        check "repo pr: injection message" grep -qF 'invalid pull request number' "$test_root/pr-option.log"
       fi
     fi
     rm -rf "$test_root"
