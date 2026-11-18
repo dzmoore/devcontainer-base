@@ -797,6 +797,181 @@ if errors:
     sys.exit(1)
 print('PASS: static contract')
 PY
+  say "T1c agent roster"
+  python3 - "$REPO" <<'PY'
+import pathlib, re, sys
+repo = pathlib.Path(sys.argv[1])
+agents_dir = repo / '.opencode' / 'agents'
+skills_dir = repo / '.opencode' / 'skills'
+errors = []
+
+def check(cond, msg):
+    if not cond:
+        errors.append(msg)
+
+model = 'opencode-go/deepseek-v4.1-flash'
+agents = ['orchestrator', 'research', 'copy-writer', 'design', 'rubber-duck',
+          'task-enumerator', 'implementer', 'validator', 'security-reviewer']
+read_only = ('design', 'rubber-duck', 'task-enumerator', 'validator',
+             'security-reviewer')
+workers = agents[1:]
+role_skills = ('orchestration', 'design-proposal', 'rubber-duck',
+               'task-breakdown', 'code-review', 'security-review')
+
+def frontmatter(path):
+    text = path.read_text()
+    if not text.startswith('---\n'):
+        return None
+    end = text.find('\n---', 4)
+    if end == -1:
+        return None
+    return text[4:end]
+
+def scalar(fm, key):
+    match = re.search(rf'(?m)^{re.escape(key)}:\s*(.+?)\s*$', fm)
+    return match.group(1).strip().strip('"') if match else None
+
+def permission_rules(fm):
+    rules = []
+    current = None
+    in_permissions = False
+    for line in fm.splitlines():
+        if re.match(r'^permissions:\s*$', line):
+            in_permissions = True
+            continue
+        if not in_permissions:
+            continue
+        if re.match(r'^\S', line):
+            break
+        match = re.match(r'^\s*-\s+action:\s*(.+?)\s*$', line)
+        if match:
+            current = {'action': match.group(1).strip().strip('"')}
+            rules.append(current)
+            continue
+        match = re.match(r'^\s+(resource|effect):\s*(.+?)\s*$', line)
+        if match and current is not None:
+            current[match.group(1)] = match.group(2).strip().strip('"')
+    return rules
+
+def has_rule(rules, action, resource, effect):
+    return any(rule.get('action') == action
+               and rule.get('resource') == resource
+               and rule.get('effect') == effect for rule in rules)
+
+frontmatters = {}
+for name in agents:
+    path = agents_dir / f'{name}.md'
+    check(path.is_file(), f'agent {name} missing')
+    if not path.is_file():
+        continue
+    fm = frontmatter(path)
+    check(fm is not None, f'agent {name} missing frontmatter')
+    if fm is None:
+        continue
+    frontmatters[name] = fm
+    check(scalar(fm, 'mode') is not None, f'agent {name} missing mode')
+    check(scalar(fm, 'model') == model,
+          f'agent {name} model must be {model}')
+    expected_mode = 'primary' if name == 'orchestrator' else 'subagent'
+    check(scalar(fm, 'mode') == expected_mode,
+          f'agent {name} must be mode: {expected_mode}')
+
+orchestrator = frontmatters.get('orchestrator')
+if orchestrator is not None:
+    rules = permission_rules(orchestrator)
+    check(has_rule(rules, 'edit', '*', 'deny'),
+          'orchestrator must deny edit *')
+    for resource in ('**/docs/superpowers/**', '**/.superpowers/**'):
+        check(has_rule(rules, 'edit', resource, 'allow'),
+              f'orchestrator must allow edit {resource}')
+    check(has_rule(rules, 'subagent', '*', 'deny'),
+          'orchestrator must deny subagent *')
+    for worker in workers:
+        check(has_rule(rules, 'subagent', worker, 'allow'),
+              f'orchestrator must allow subagent {worker}')
+    check(has_rule(rules, 'question', '*', 'allow'),
+          'orchestrator must allow question *')
+
+for name in read_only:
+    fm = frontmatters.get(name)
+    if fm is None:
+        continue
+    rules = permission_rules(fm)
+    check(has_rule(rules, 'edit', '*', 'deny'),
+          f'{name} must deny edit *')
+    check(has_rule(rules, 'question', '*', 'deny'),
+          f'{name} must deny question *')
+    check(has_rule(rules, 'subagent', '*', 'deny'),
+          f'{name} must deny subagent *')
+
+implementer = frontmatters.get('implementer')
+if implementer is not None:
+    rules = permission_rules(implementer)
+    check(has_rule(rules, 'edit', '*', 'allow'),
+          'implementer must allow edit *')
+    check(has_rule(rules, 'question', '*', 'deny'),
+          'implementer must deny question *')
+    check(has_rule(rules, 'subagent', '*', 'deny'),
+          'implementer must deny subagent *')
+    check(has_rule(rules, 'shell', '*', 'allow'),
+          'implementer must allow shell *')
+    check(has_rule(rules, 'shell', 'git push*', 'deny'),
+          'implementer must deny git push')
+    check(has_rule(rules, 'shell', 'git reset --hard*', 'deny'),
+          'implementer must deny git reset --hard')
+    for skill in ('test-driven-development', 'systematic-debugging',
+                  'verification-before-completion', 'receiving-code-review'):
+        check(has_rule(rules, 'skill', skill, 'allow'),
+              f'implementer must allow skill {skill}')
+
+research = frontmatters.get('research')
+if research is not None:
+    rules = permission_rules(research)
+    for action, resource, effect, label in (
+            ('edit', '*', 'deny', 'edit *'),
+            ('edit', 'research/**', 'allow', 'edit research/**'),
+            ('shell', '*', 'deny', 'shell *'),
+            ('websearch', '*', 'deny', 'websearch *'),
+            ('execute', '*', 'deny', 'execute *'),
+            ('subagent', '*', 'deny', 'subagent *'),
+            ('question', '*', 'deny', 'question *'),
+            ('parallel-search_*', '*', 'allow', 'Parallel Search tools'),
+            ('brave-search-mcp-server_*', '*', 'allow', 'Brave Search tools')):
+        check(has_rule(rules, action, resource, effect),
+              f'research must keep {label}')
+
+copy_writer = frontmatters.get('copy-writer')
+if copy_writer is not None:
+    rules = permission_rules(copy_writer)
+    for action, resource, effect, label in (
+            ('edit', '*', 'deny', 'edit *'),
+            ('edit', '.opencode/**', 'deny', 'edit .opencode/**'),
+            ('parallel-search_*', '*', 'deny', 'Parallel Search deny'),
+            ('brave-search-mcp-server_*', '*', 'deny', 'Brave Search deny'),
+            ('subagent', '*', 'deny', 'subagent *'),
+            ('question', '*', 'deny', 'question *')):
+        check(has_rule(rules, action, resource, effect),
+              f'copy-writer must keep {label}')
+
+found_skills = {path.parent.name: path
+                for path in skills_dir.rglob('SKILL.md')}
+for skill in role_skills:
+    check(skill in found_skills, f'role skill {skill} missing SKILL.md')
+check('run-research' in found_skills, 'run-research skill missing')
+for skill in ('technical-writing', 'writing-design-docs', 'recording-decisions',
+              'writing-changelogs', 'writing-runbooks', 'writing-issues',
+              'writing-postmortems', 'documenting-legacy-codebases',
+              'diagramming-processes', 'documenting-contracts',
+              'reviewing-technical-prose', 'writing-clearly-and-concisely',
+              'writing-commits-and-pull-requests'):
+    check(skill in found_skills, f'writing skill {skill} missing')
+
+if errors:
+    for error in errors:
+        print(f'FAIL: {error}')
+    sys.exit(1)
+print('PASS: agent roster')
+PY
   bash -n "$REPO/.devcontainer/post-create.sh"
   echo 'PASS: post-create.sh syntax'
   bash -n "$REPO/.devcontainer/bin/gh-app"
@@ -1041,6 +1216,28 @@ check "run: glow" glow --version
 check "run: glow version" bash -c "glow --version | grep -qF '${glow_expected#v}'"
 check "run: glow pager" bash -c 'printf "# pager\n" >/tmp/glow-pager.md && env -u PAGER glow /tmp/glow-pager.md --pager </dev/null >/dev/null && rm -f /tmp/glow-pager.md'
 check "run: opencode" opencode --version
+if ! opencode --standalone debug agents > "$HOME/.agents.json" 2>/dev/null; then
+  bad "control-plane agents: debug agents failed"
+elif ! python3 - "$HOME/.agents.json" <<'PY'
+import json, sys
+agents = {a['id']: a for a in json.load(open(sys.argv[1]))}
+expected = {'orchestrator','research','copy-writer','design','rubber-duck',
+            'task-enumerator','implementer','validator','security-reviewer'}
+missing = expected - agents.keys()
+assert not missing, f'missing agents: {sorted(missing)}'
+assert agents['orchestrator']['mode'] == 'primary'
+for name in expected - {'orchestrator'}:
+    assert agents[name]['mode'] == 'subagent', name
+for name in expected:
+    resolved = agents[name]['model']
+    assert resolved.get('providerID') == 'opencode-go', name
+    # OpenCode 2.3.0 reports the model id under 'id'; older shapes used 'model'.
+    assert resolved.get('id', resolved.get('model')) == 'deepseek-v4.1-flash', name
+print('PASS: control-plane agents')
+PY
+then
+  bad "control-plane agents"
+fi
 
 docker_ok=0
 for _ in $(seq 1 60); do
