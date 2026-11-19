@@ -29,7 +29,6 @@
     "type=volume,source=nvim-share,target=/home/developer/.local/share/nvim",
     "type=volume,source=kubeconfig,target=/home/developer/.kube",
     "type=bind,src=${localEnv:HOME}/.devcontainer/github,dst=/home/developer/.dc/github,bind-create-src,ro",
-    "type=bind,src=${localEnv:HOME}/.devcontainer/brave/.env,dst=/home/developer/.dc/brave/.env,bind-create-src,ro",
     "type=bind,src=${localEnv:HOME}/.devcontainer/opencode,dst=/etc/opencode,ro"
   ],
   "containerEnv": {

@@ -98,9 +98,6 @@ for mount in data.get('mounts', []):
         elif target == '/home/developer/.dc/github' and (part.startswith('source=') or part.startswith('src=')):
             key, _ = part.split('=', 1)
             part = f'{key}={copy}/host-github'
-        elif target == '/home/developer/.dc/brave/.env' and (part.startswith('source=') or part.startswith('src=')):
-            key, _ = part.split('=', 1)
-            part = f'{key}={copy}/host-brave.env'
         out.append(part)
     mounts.append(','.join(out))
 data['mounts'] = mounts
@@ -114,18 +111,15 @@ PY
   cat >"$COPY/host-github/.env" <<'ENV'
 GITHUB_TOKEN=placeholder-smoke-token
 ENV
-  cat >"$COPY/host-brave.env" <<'ENV'
-BRAVE_API_KEY=placeholder-smoke-key
-ENV
   cat >"$COPY/host-opencode/opencode.json" <<'JSON'
 {
   "$schema": "https://opencode.ai/config.json",
   "policies": [
-    { "action": "mcp.use", "resource": "probe-enabled", "effect": "allow" }
+    { "action": "mcp.use", "resource": "search-*", "effect": "allow" }
   ],
   "mcp": {
     "servers": {
-      "probe-enabled": {
+      "search-probe": {
         "type": "local",
         "command": ["true"],
         "enabled": true
@@ -484,8 +478,12 @@ check('Neither the\norchestrator nor an implementer may approve its own exceptio
       'AGENTS.md must require explicit user approval for TDD exceptions')
 check('Read-only is a guardrail, not a sandbox' in agents_text,
       'AGENTS.md must say read-only is a guardrail, not a sandbox')
-check('new host MCP server' in agents_text and 'non-research agent' in agents_text,
-      'AGENTS.md must say every new host MCP needs a deny in every non-research agent')
+check('new host search server' in agents_text and 'search-` prefix' in agents_text,
+      'AGENTS.md must say every new host search server uses the search- prefix')
+check('search-*' in agents_text and 'prefix' in agents_text,
+      'AGENTS.md must document the search-* server-name prefix')
+check('non-search host MCP server' in agents_text and 'non-research agent' in agents_text,
+      'AGENTS.md must require explicit denies for non-search MCP servers')
 check('The plugin skips child sessions' in agents_text,
       'AGENTS.md must explain the worker bootstrap without a false plugin rationale')
 security_skill = repo / '.opencode' / 'skills' / 'security-review' / 'SKILL.md'
@@ -496,6 +494,8 @@ if security_skill.is_file():
           'security-review skill must name every non-research control-plane agent')
     check('only agent allowed' in security_text,
           'security-review skill must say research is the only agent allowed MCP use')
+    check('search-*' in security_text,
+          'security-review skill must use the search-* server-name convention')
 check('# --- opencode control plane ---' in (repo / '.devcontainer/post-create.sh').read_text(),
       'post-create must install the control plane')
 
@@ -536,9 +536,8 @@ if copy_agent.is_file():
     for denied in ('.opencode/**', '.git/**', 'node_modules/**'):
         check(f'resource: "{denied}"' in agent_text,
               f'copy-writer must not edit {denied}')
-    for server in ('parallel-search', 'brave-search-mcp-server'):
-        check(f'action: "{server}_*"' in agent_text,
-              f'copy-writer must deny MCP server {server}')
+    check('action: "search-*"' in agent_text,
+          'copy-writer must deny MCP servers matching search-*')
     check('resource: "*--output*"' in agent_text,
           'copy-writer must deny shell --output writes')
     check('resource: "*>*"' in agent_text,
@@ -586,8 +585,8 @@ if copy_agent.is_file():
         ('shell', 'scripts/render-excalidraw.sh docs/diagrams/process.excalidraw', 'allow'),
         ('skill', 'writing-commits-and-pull-requests', 'allow'),
         ('skill', 'run-research', 'deny'),
-        ('parallel-search_web_search', '*', 'deny'),
-        ('brave-search-mcp-server_brave_web_search', '*', 'deny'),
+        ('search-parallel_web_search', '*', 'deny'),
+        ('search-brave_brave_web_search', '*', 'deny'),
         ('experimental_image_generate', 'opencode-go/deepseek-v4.1-flash', 'deny'),
     ]
     for action, resource, expected in permission_cases:
@@ -712,7 +711,17 @@ if readme_path.is_file():
     check('### Host MCP and agent overrides' in readme_text,
           'README.md missing the Host MCP and agent overrides section')
     check('~/.devcontainer/opencode/opencode.json' in readme_text,
-          'README.md must say Parallel and Brave are configured in the host overlay')
+          'README.md must show the host overlay config path')
+    check('search-parallel' in readme_text and 'search-brave' in readme_text,
+          'README.md must document the search-parallel and search-brave example servers')
+    check('mcp.use search-*' in readme_text,
+          'README.md must document the mcp.use search-* policy')
+    check('~/.devcontainer/opencode/secrets/brave_api_key' in readme_text,
+          'README.md must point MCP secrets at the overlay secret file')
+    check('~/.devcontainer/brave/.env` is no longer mounted' in readme_text,
+          'README.md must document the legacy Brave .env migration')
+    check('mkdir -p ~/.devcontainer/github ~/.devcontainer/brave' not in readme_text,
+          'README.md must not tell users to create the legacy Brave .env directory')
     check('/etc/opencode' in readme_text,
           'README.md must document the host-only MCP overlay at /etc/opencode')
     check('enforced by policy' in readme_text,
@@ -723,10 +732,12 @@ if readme_path.is_file():
           'README.md must pin the Brave MCP package')
     check('a guardrail, not a sandbox' in readme_text,
           'README.md must say read-only is a guardrail, not a sandbox')
-    check('new host MCP server' in readme_text and 'non-research agent' in readme_text,
-          'README.md must say every new host MCP needs a deny in every non-research agent')
-    check('Three read-only bind mounts' in readme_text,
-          'README.md must not claim only two read-only bind mounts')
+    check('new host search server' in readme_text and 'search-` prefix' in readme_text,
+          'README.md must say every new host search server uses the search- prefix')
+    check('non-search host MCP server' in readme_text and 'non-research agent' in readme_text,
+          'README.md must say a non-search host MCP needs a deny in every non-research agent')
+    check('Two read-only bind mounts' in readme_text,
+          'README.md must say two read-only bind mounts remain after Brave removal')
     check('`/etc/opencode` to be mounted and read-only' in readme_text,
           'README.md smoke-real note must mention the /etc/opencode overlay')
 
@@ -859,24 +870,30 @@ check(example_config.is_file(), 'host overlay example opencode.json missing')
 check(example_agent.is_file(), 'host overlay example research.md missing')
 if example_config.is_file():
     example_text = example_config.read_text()
-    for server in ('parallel-search', 'brave-search-mcp-server'):
+    for server in ('search-parallel', 'search-brave'):
         check(f'"{server}"' in example_text,
               f'host overlay example must define {server}')
+    for server in ('parallel-search', 'brave-search-mcp-server'):
+        check(f'"{server}"' not in example_text,
+              f'host overlay example must not define the legacy {server} server name')
     example = json.loads(example_text)
     example_perms = example.get('permissions', [])
     example_policies = example.get('policies', [])
-    for server in ('parallel-search', 'brave-search-mcp-server'):
-        check(any(rule.get('action') == 'mcp.use'
-                  and rule.get('resource') == server
-                  and rule.get('effect') == 'allow'
-                  for rule in example_policies),
-              f'host overlay example must allow mcp.use {server} in policies')
+    mcp_use_grants = [rule for rule in example_policies
+                      if rule.get('action') == 'mcp.use']
+    check(len(mcp_use_grants) == 1
+          and mcp_use_grants[0].get('resource') == 'search-*'
+          and mcp_use_grants[0].get('effect') == 'allow',
+          'host overlay example must allow mcp.use search-* in one policy')
     check(not any(rule.get('action') in ('mcp.use', 'plugin.use')
                   for rule in example_perms),
           'host overlay example must not put mcp.use/plugin.use under permissions')
-    brave = example.get('mcp', {}).get('servers', {}).get('brave-search-mcp-server', {})
+    brave = example.get('mcp', {}).get('servers', {}).get('search-brave', {})
     check('@brave/brave-search-mcp-server@2.1.5' in brave.get('command', []),
           'host overlay example must pin @brave/brave-search-mcp-server@2.1.5')
+    check(brave.get('environment', {}).get('BRAVE_API_KEY')
+          == '{file:/etc/opencode/secrets/brave_api_key}',
+          'host overlay example must read the Brave key from the overlay secret file')
 if example_agent.is_file():
     check('description:' in example_agent.read_text(),
           'host overlay example research override must define a description')
@@ -894,10 +911,10 @@ if overlay_heredoc:
     overlay_perms = overlay_json.get('permissions', [])
     overlay_policies = overlay_json.get('policies', [])
     check(any(rule.get('action') == 'mcp.use'
-              and rule.get('resource') == 'probe-enabled'
+              and rule.get('resource') == 'search-*'
               and rule.get('effect') == 'allow'
               for rule in overlay_policies),
-          'hermetic host overlay must allow mcp.use probe-enabled in policies')
+          'hermetic host overlay must allow mcp.use search-* in policies')
     check(not any(rule.get('action') in ('mcp.use', 'plugin.use')
                   for rule in overlay_perms),
           'hermetic host overlay must not put mcp.use/plugin.use under permissions')
@@ -908,7 +925,7 @@ smoke_body = (smoke_text[run_smoke_pos:run_smoke_end]
 marker_pos = smoke_body.find('/workspace/.dc-smoke-prefix')
 guard_pos = smoke_body.find('if [ "$hermetic" -eq 1 ]')
 desc_pos = smoke_body.find('Host test research override')
-probe_pos = smoke_body.find('check "host overlay: probe-enabled listed"')
+probe_pos = smoke_body.find('check "host overlay: search-probe listed"')
 gate_end_pos = smoke_body.find('check "host overlay: /etc/opencode read-only"')
 repo_clone_pos = smoke_body.find('repo clone: local remote')
 repo_worktree_pos = smoke_body.find('repo worktree: path exists')
@@ -922,7 +939,7 @@ for marker in ("research.get('system'", 'Host test research override body',
     check(marker in smoke_body,
           f'host override test must assert {marker!r}')
 check(guard_pos != -1 and probe_pos > guard_pos,
-      'probe-enabled assertion must be inside the hermetic gate')
+      'search-probe assertion must be inside the hermetic gate')
 for marker in ('project-probe', 'project-plugin-ran', 'project-plugin-loaded'):
     check(marker in smoke_body,
           f'run_smoke must assert the project probe deny {marker!r}')
@@ -963,8 +980,8 @@ if copy_body:
               f'prepare_copy must parse the rewritten devcontainer with {marker!r}')
     check('$COPY/host-github' in copy_body,
           'prepare_copy must create a disposable GitHub fixture')
-    check('$COPY/host-brave.env' in copy_body,
-          'prepare_copy must create a disposable Brave fixture')
+    check('host-brave.env' not in copy_body and '.dc/brave' not in copy_body,
+          'prepare_copy must not rewrite or create a legacy Brave .env fixture')
 
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
@@ -1042,7 +1059,10 @@ check('YQ_VERSION' not in post, 'post-create.sh should not reinstall yq')
 check('export $(' not in post, 'post-create.sh uses unsafe export $(...)')
 check('[ -f "$GITHUB_ENV_FILE" ]' in post, 'post-create.sh must use -f for env files')
 check('# --- github env ---' in post, 'post-create.sh missing github env marker')
-check('# --- brave env ---' in post, 'post-create.sh missing brave env marker')
+check('# --- brave env ---' not in post,
+      'post-create.sh must not install the legacy Brave env loader')
+check('BRAVE_ENV_FILE' not in post,
+      'post-create.sh must not reference BRAVE_ENV_FILE')
 check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"' in post,
       'post-create.sh must chown .local, .config, and .kube to the runtime user')
 chown_line = re.search(r'chown -R --no-dereference.*', post)
@@ -1087,6 +1107,9 @@ if github_mounts:
     check('bind-create-src' in parts, 'GitHub credential mount must use bind-create-src')
 check(not any('/.dc/github/.env' in mount for mount in dc.get('mounts', [])),
       'GitHub mount must be the directory, not the single .env file')
+check(not any('/.dc/brave' in mount or '.devcontainer/brave' in mount
+              for mount in dc.get('mounts', [])),
+      'devcontainer.json must not mount the legacy Brave .env file')
 
 for name in ('gh-app-token', 'gh-app'):
     helper = repo / '.devcontainer' / 'bin' / name
@@ -1383,7 +1406,7 @@ for name in read_only:
           f'{name} must deny subagent *')
     for action in ('execute', 'webfetch', 'websearch', 'external_directory',
                    'opencode_*', 'worktree_*', 'session_*',
-                   'parallel-search_*', 'brave-search-mcp-server_*'):
+                   'search-*'):
         check(has_rule(rules, action, '*', 'deny'),
               f'{name} must deny {action} *')
 
@@ -1393,9 +1416,8 @@ for name in ('orchestrator', 'copy-writer', 'design', 'rubber-duck',
     if fm is None:
         continue
     rules = permission_rules(fm)
-    for action in ('parallel-search_*', 'brave-search-mcp-server_*'):
-        check(has_rule(rules, action, '*', 'deny'),
-              f'{name} must deny {action} *')
+    check(has_rule(rules, 'search-*', '*', 'deny'),
+          f'{name} must deny search-* *')
 
 strict_read_only = {'design': 'design-proposal',
                     'rubber-duck': 'rubber-duck',
@@ -1452,8 +1474,7 @@ if research is not None:
             ('execute', '*', 'deny', 'execute *'),
             ('subagent', '*', 'deny', 'subagent *'),
             ('question', '*', 'deny', 'question *'),
-            ('parallel-search_*', '*', 'allow', 'Parallel Search tools'),
-            ('brave-search-mcp-server_*', '*', 'allow', 'Brave Search tools')):
+            ('search-*', '*', 'allow', 'search MCP tools')):
         check(has_rule(rules, action, resource, effect),
               f'research must keep {label}')
 
@@ -1463,8 +1484,7 @@ if copy_writer is not None:
     for action, resource, effect, label in (
             ('edit', '*', 'deny', 'edit *'),
             ('edit', '.opencode/**', 'deny', 'edit .opencode/**'),
-            ('parallel-search_*', '*', 'deny', 'Parallel Search deny'),
-            ('brave-search-mcp-server_*', '*', 'deny', 'Brave Search deny'),
+            ('search-*', '*', 'deny', 'search MCP deny'),
             ('subagent', '*', 'deny', 'subagent *'),
             ('question', '*', 'deny', 'question *')):
         check(has_rule(rules, action, resource, effect),
@@ -1807,23 +1827,23 @@ PY
   mcp_listed=0
   for _ in $(seq 1 15); do
     if opencode mcp list >"$HOME/.mcp-list.txt" 2>&1 \
-        && grep -qF 'probe-enabled' "$HOME/.mcp-list.txt"; then
+        && grep -qF 'search-probe' "$HOME/.mcp-list.txt"; then
       mcp_listed=1
       break
     fi
     sleep 1
   done
   if [ "$mcp_listed" -eq 1 ]; then
-    check "host overlay: probe-enabled listed" grep -qF 'probe-enabled' "$HOME/.mcp-list.txt"
+    check "host overlay: search-probe listed" grep -qF 'search-probe' "$HOME/.mcp-list.txt"
     if [ -f /etc/opencode/opencode.json ]; then
-      for server in parallel-search brave-search-mcp-server; do
+      for server in search-parallel search-brave; do
         if grep -qF "\"$server\"" /etc/opencode/opencode.json; then
           check "host overlay: $server listed" grep -qF "$server" "$HOME/.mcp-list.txt"
         fi
       done
     fi
   else
-    check "host overlay: probe-enabled listed" grep -qF 'probe-enabled' "$HOME/.mcp-list.txt"
+    check "host overlay: search-probe listed" grep -qF 'search-probe' "$HOME/.mcp-list.txt"
     sed -n '1,40p' "$HOME/.mcp-list.txt" >&2 || true
   fi
   check "host overlay: project-probe denied" bash -c \
@@ -1965,12 +1985,9 @@ check "alias: ll" bash -ic 'type ll >/dev/null 2>&1'
 check "alias: vi" bash -ic 'type vi >/dev/null 2>&1'
 check "alias: gs" bash -ic 'type gs >/dev/null 2>&1'
 check "bashrc: github env" grep -q '# --- github env ---' "$HOME/.bashrc"
-check "bashrc: brave env" grep -q '# --- brave env ---' "$HOME/.bashrc"
+check "bashrc: no legacy brave env" bash -c '! grep -q "# --- brave env ---" "$HOME/.bashrc"'
 if [ -f "$HOME/.dc/github/.env" ]; then
   check "bashrc: github env loads" bash -ic 'test -n "${GITHUB_TOKEN:-}"'
-fi
-if [ -f "$HOME/.dc/brave/.env" ]; then
-  check "bashrc: brave env loads" bash -ic 'test -n "${BRAVE_API_KEY:-}"'
 fi
 check "locale: en_US.utf8" bash -c "locale -a | grep -qi en_US"
 

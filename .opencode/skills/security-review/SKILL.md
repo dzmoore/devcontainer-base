@@ -81,13 +81,14 @@ finding; say why the model missed it.
   permission rules. They are trusted and can weaken TDD or security policy.
   Review them like code.
 - Every non-research control-plane agent needs an explicit deny for every host
-  search or write-capable MCP server. The two known servers,
-  `parallel-search_*` and `brave-search-mcp-server_*`, must stay denied in
+  search or write-capable MCP server. Host search servers use the `search-`
+  name prefix, so non-research agents deny `search-*`; the prefix is a policy
+  convention, not a sandbox. `search-*` must stay denied in
   every non-research agent (`orchestrator`, `copy-writer`, `design`,
   `rubber-duck`, `task-enumerator`, `implementer`, `validator`,
-  `security-reviewer`). A new host server needs a manual deny in every
-  non-research agent. `research` is the only agent allowed to use the research
-  MCP servers.
+  `security-reviewer`). A non-search host MCP server needs an explicit deny in
+  every non-research agent. `research` is the only agent allowed to use the
+  search MCP servers.
 - The overlay is integrity protection, not a confidentiality boundary. The
   container is privileged for Docker-in-Docker; say so when the change relies on
   isolation.
@@ -163,6 +164,6 @@ orchestrator dispatch the implementer.
   part of the change.
 - **Trusting the host overlay.** It is trusted by design, not proven safe.
 - **Assuming the container is a sandbox.** It is privileged.
-- **Ignoring a docs-only agent's MCP denies.** A new host server needs a new
-  deny.
+- **Ignoring a docs-only agent's MCP denies.** A non-search host MCP server
+  needs a new deny, and a host search server must use the `search-` prefix.
 - **PASS with an unreviewed supply-chain change.** Pin it or fail it.

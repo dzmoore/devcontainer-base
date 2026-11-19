@@ -2,7 +2,6 @@
 set -euo pipefail
 
 GITHUB_ENV_FILE="$HOME/.dc/github/.env"
-BRAVE_ENV_FILE="$HOME/.dc/brave/.env"
 DEV_USER="${SUDO_USER:-$(id -un)}"
 
 # --- timezone ---
@@ -57,8 +56,8 @@ if [ "$(cat /etc/timezone 2>/dev/null || true)" != "$TZ" ]; then
 fi
 
 # Read the GitHub token in a subshell so the rest of the script's child
-# processes do not inherit it. The .bashrc blocks further down load the env
-# files for future interactive shells.
+# processes do not inherit it. The .bashrc block further down loads the env
+# file for future interactive shells.
 github_token=""
 if [ -f "$GITHUB_ENV_FILE" ]; then
   echo "Loading GitHub env ($GITHUB_ENV_FILE)..."
@@ -217,19 +216,6 @@ GITHUB_ENV_FILE="$GITHUB_ENV_FILE"
 if [ -f "$GITHUB_ENV_FILE" ]; then
   set -a
   . "$GITHUB_ENV_FILE"
-  set +a
-fi
-EOF
-fi
-
-if ! grep -qF '# --- brave env ---' "$HOME/.bashrc" 2>/dev/null; then
-  cat >>"$HOME/.bashrc" <<EOF
-
-# --- brave env ---
-BRAVE_ENV_FILE="$BRAVE_ENV_FILE"
-if [ -f "$BRAVE_ENV_FILE" ]; then
-  set -a
-  . "$BRAVE_ENV_FILE"
   set +a
 fi
 EOF

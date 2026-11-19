@@ -1,17 +1,16 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "policies": [
-    { "action": "mcp.use", "resource": "parallel-search", "effect": "allow" },
-    { "action": "mcp.use", "resource": "brave-search-mcp-server", "effect": "allow" }
+    { "action": "mcp.use", "resource": "search-*", "effect": "allow" }
   ],
   "mcp": {
     "servers": {
-      "parallel-search": {
+      "search-parallel": {
         "type": "remote",
         "url": "https://search.parallel.ai/mcp",
         "codemode": false
       },
-      "brave-search-mcp-server": {
+      "search-brave": {
         "type": "local",
         "command": [
           "npx",

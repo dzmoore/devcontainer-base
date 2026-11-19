@@ -34,7 +34,7 @@ the tools this host provides:
 | Search files | `grep`, `glob`. |
 | Fetch a URL | `webfetch`. |
 | Search the web | `websearch`. |
-| MCP action | Call the exposed MCP tool by its full name, for example `parallel-search_web_search` or `brave-search-mcp-server_brave_web_search`. |
+| MCP action | Call the exposed MCP tool by its full name, for example `search-parallel_web_search` or `search-brave_brave_web_search`. |
 
 Skill IDs are bare names. Drop the `superpowers:` prefix when a skill names
 another skill: `superpowers:brainstorming` means the `brainstorming` skill.
@@ -85,7 +85,7 @@ The project `opencode.jsonc` defines no MCP servers and loads no git-backed
 plugin. Host-only MCP is enforced by policy, not just convention: the global
 control-plane config's top-level `policies` deny `mcp.use *` and `plugin.use *`,
 allow only the local Superpowers plugin, and the host overlay's top-level
-`policies` allow its own named servers.
+`policies` allow `mcp.use search-*` and any non-search server it defines.
 Do not add MCP entries to a repository to work around a missing host server;
 the policy blocks them.
 
@@ -97,11 +97,12 @@ such entries. For an untrusted clone, pin the control-plane agents in the host
 overlay instead of relying on the project layer.
 
 When a research MCP server is unavailable, say so and mark the affected claims
-`unverified`. Do not substitute an unapproved search source. Every agent except
-`research` denies the two known servers, `parallel-search_*` and
-`brave-search-mcp-server_*`, by name. Every new host MCP server needs a matching
+`unverified`. Do not substitute an unapproved search source. Host search MCP
+servers use the `search-` name prefix, and every new host search server must use
+the `search-` prefix so policy matches it. Every agent except `research` denies
+`search-*` by name prefix. Every non-search host MCP server needs an explicit
 deny in every non-research agent, including the host copy of that agent.
-`research` is the only agent allowed to use the research MCP servers.
+`research` is the only agent allowed to use search MCP servers.
 
 ## Repository paths
 

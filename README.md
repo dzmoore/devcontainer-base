@@ -123,28 +123,30 @@ If the project already has a `.devcontainer/` or `.opencode/`, merge the files i
 
 ### Optional: host secrets
 
-Three read-only bind mounts make host-side configuration and secrets available inside the container:
+Two read-only bind mounts make host-side configuration and secrets available inside the container:
 
 - `~/.devcontainer/github/` provides GitHub credentials. `.env` can hold `GITHUB_TOKEN` for `gh` and the `post-create.sh` Helm `ghcr.io` login, plus the GitHub App variables. `app.pem` holds the App private key.
-- `~/.devcontainer/brave/.env` provides `BRAVE_API_KEY` for shell tools that read it. The Brave MCP server does not read this file; it reads `~/.devcontainer/opencode/secrets/brave_api_key` through `{file:/etc/opencode/secrets/brave_api_key}`.
 - `~/.devcontainer/opencode/` provides the host MCP and agent overlay mounted at `/etc/opencode`; see [Host MCP and agent overrides](#host-mcp-and-agent-overrides).
 
 Create the files on the host before the first launch:
 
 ```bash
-mkdir -p ~/.devcontainer/github ~/.devcontainer/brave
+mkdir -p ~/.devcontainer/github
 chmod 700 ~/.devcontainer/github
 printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" > ~/.devcontainer/github/.env
-printf 'BRAVE_API_KEY=%s\n' "$BRAVE_API_KEY" > ~/.devcontainer/brave/.env
-chmod 600 ~/.devcontainer/github/.env ~/.devcontainer/brave/.env
+chmod 600 ~/.devcontainer/github/.env
 ```
 
 To use the GitHub App flow instead of, or in addition to, the PAT, put the App variables in the same `.env` and place the private key at `~/.devcontainer/github/app.pem`; see [GitHub App tokens](#github-app-tokens). The existing `/home/developer/.dc/github/.env` path does not change because the whole directory is mounted read-only.
 
-The files are mounted read-only and sourced by interactive bash shells. If you do not need them, remove the corresponding entries from `mounts` in `devcontainer.json`.
+The GitHub `.env` is mounted read-only and sourced by interactive bash shells. If you do not need it, remove the corresponding entry from `mounts` in `devcontainer.json`.
 
 > [!IMPORTANT]
-> Create the GitHub directory and files before the first launch. The GitHub source is now a directory mount; Docker may create a missing directory for it. The Brave source is still a single file, so if Docker creates a directory at `~/.devcontainer/brave/.env`, remove it and create the file before starting the container again.
+> Create the GitHub directory and files before the first launch. The GitHub source is a directory mount; Docker may create a missing directory for it.
+
+#### Migrating from the legacy Brave `.env` mount
+
+`~/.devcontainer/brave/.env` is no longer mounted, and `post-create.sh` no longer adds a `brave env` loader to `.bashrc`. MCP hosts read the Brave key from the overlay secret file `~/.devcontainer/opencode/secrets/brave_api_key`, which the example server references as `{file:/etc/opencode/secrets/brave_api_key}`. After you confirm the overlay secret works, remove the old file.
 
 ### Working with multiple repositories
 
@@ -415,8 +417,11 @@ chmod 600 ~/.devcontainer/opencode/secrets/brave_api_key
 ```
 
 The canonical example is `.devcontainer/examples/opencode/opencode.json`. It
-defines `parallel-search` and `brave-search-mcp-server`; the Brave server reads
-`BRAVE_API_KEY` from `{file:/etc/opencode/secrets/brave_api_key}` and pins
+defines `search-parallel` (remote) and `search-brave` (local `npx`). Host search
+servers use the `search-` name prefix, so the example allows `mcp.use search-*`
+in one policy. Every new host search server must use the `search-` prefix. The
+Brave server reads `BRAVE_API_KEY` from
+`{file:/etc/opencode/secrets/brave_api_key}` and pins
 `@brave/brave-search-mcp-server@2.1.5`. Hosts should pin and review every MCP
 package they add; an unpinned `npx` package can change between starts. Copy the
 example to `~/.devcontainer/opencode/opencode.json` and edit it for your host;
@@ -424,6 +429,13 @@ do not add MCP servers to a repository. The example agent override is
 `.devcontainer/examples/opencode/agents/research.md`; copy it to
 `~/.devcontainer/opencode/agents/research.md` to replace the research body while
 inheriting the model and permissions.
+
+If an existing host defines `parallel-search` or `brave-search-mcp-server`,
+rename them to `search-parallel` and `search-brave`, then replace the per-server
+`mcp.use` allows with one `mcp.use search-*` allow. If you keep a different
+search server, give it a name that starts with `search-`. Alternatively, override
+the research agent and its policies in the host overlay. A non-search server
+still needs an explicit deny in every non-research agent.
 
 `post-create.sh` validates every `{file:/etc/opencode/...}` reference in the
 overlay before OpenCode starts. It fails with the exact path when a referenced
@@ -438,12 +450,12 @@ file is missing, unreadable, or empty. Do not print or log secret values.
 > servers, including no research MCP servers.
 
 Docs-only and read-only agents must deny every host search or write-capable MCP
-server. Every agent except `research` denies the two known servers,
-`parallel-search_*` and `brave-search-mcp-server_*`. Every new host MCP server
-needs a matching deny in every non-research agent; append it to the host copy at
+server. Host search servers use the `search-` name prefix, so every agent except
+`research` denies `search-*`. Every non-search host MCP server needs a matching
+deny in every non-research agent; append it to the host copy at
 `~/.devcontainer/opencode/agents/<agent>.md` as well as the repository agent
 files. Permission rules append to the base rules. `research` is the only agent
-allowed to use the research MCP servers.
+allowed to use the search MCP servers.
 
 ### GitHub App tokens
 
@@ -508,7 +520,7 @@ Editing `.env` in a live interactive shell leaves the old exported values in tha
 
 ### Research subagent
 
-The control plane defines a `research` subagent and a `run-research` skill for evidence-backed web research. Parallel Search and Brave Search come from the host overlay at `~/.devcontainer/opencode/opencode.json`, mounted read-only at `/etc/opencode`; the project `opencode.jsonc` defines no MCP servers. The subagent uses those host servers as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
+The control plane defines a `research` subagent and a `run-research` skill for evidence-backed web research. Search MCP servers come from the host overlay at `~/.devcontainer/opencode/opencode.json`, mounted read-only at `/etc/opencode`; the project `opencode.jsonc` defines no MCP servers. Host search servers use the `search-` name prefix, and the subagent uses the tools any of them expose as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
 
 Invoke the skill with a research question:
 
@@ -532,15 +544,16 @@ research/<YYYY-MM-DD>-<slug>/
 
 `research/` is gitignored; do not commit reports or evidence notes. The `research` subagent can write only under `research/**` and cannot use shell or Code Mode, launch subagents, or ask the user.
 
-The Brave server reads `~/.devcontainer/opencode/secrets/brave_api_key`, which
-must be a non-empty file before OpenCode starts; `post-create.sh` fails with the
-path when a `{file:/etc/opencode/...}` reference is missing, unreadable, or
-empty. If one host MCP server fails at runtime, the research agents continue
-with the other provider and record the degraded mode. A repository without the
-host overlay has no research MCP servers; the worker marks unsupported claims
-`unverified` rather than falling back to built-in search. Amazon detail pages and
-Reddit may block fetching; the report marks those claims `unverified` rather
-than inventing them.
+A `search-*` server that needs a key reads it from
+`~/.devcontainer/opencode/secrets/`, and the secret file must be non-empty before
+OpenCode starts; `post-create.sh` fails with the path when a
+`{file:/etc/opencode/...}` reference is missing, unreadable, or empty. The Brave
+example reads `~/.devcontainer/opencode/secrets/brave_api_key`. If one host MCP
+server fails at runtime, the research agents continue with the others and record
+the degraded mode. A repository without the host overlay has no research MCP
+servers; the worker marks unsupported claims `unverified` rather than falling
+back to built-in search. Amazon detail pages and Reddit may block fetching; the
+report marks those claims `unverified` rather than inventing them.
 
 ### Copy writer subagent
 
@@ -768,7 +781,7 @@ If you need a project config for read-only commands and are not using kind, you 
 
 ### Host secret mounts are empty or are directories
 
-Create the GitHub directory and `.env` files on the host before the first launch (see [Optional: host secrets](#optional-host-secrets)). The GitHub source is a directory mount; if it is missing, add `.env` and `app.pem` and restart the container. The Brave source is a single file; if Docker created a directory at `~/.devcontainer/brave/.env`, remove it and create the file before starting the container again.
+Create the GitHub directory and `.env` file on the host before the first launch (see [Optional: host secrets](#optional-host-secrets)). The GitHub source is a directory mount; if it is missing, add `.env` and `app.pem` and restart the container. The legacy `~/.devcontainer/brave/.env` file is no longer mounted; MCP hosts use `~/.devcontainer/opencode/secrets/brave_api_key`. Remove the old file after you confirm the overlay secret works.
 
 ### `gh-app-token` reports missing configuration
 

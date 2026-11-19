@@ -45,10 +45,7 @@ permissions:
   - action: skill
     resource: "*"
     effect: allow
-  - action: "parallel-search_*"
-    resource: "*"
-    effect: deny
-  - action: "brave-search-mcp-server_*"
+  - action: "search-*"
     resource: "*"
     effect: deny
 ---
