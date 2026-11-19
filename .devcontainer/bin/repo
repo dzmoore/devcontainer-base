@@ -1,0 +1,419 @@
+#!/usr/bin/env bash
+# Multi-repo workspace helper. Clones live under /workspace/repos so they
+# persist through a rebuild without a named volume.
+set -euo pipefail
+
+ROOT="${REPO_ROOT:-/workspace/repos}"
+GITHUB_ENV_FILE="${GITHUB_APP_ENV_FILE:-${GITHUB_ENV_FILE:-$HOME/.dc/github/.env}}"
+export GITHUB_APP_ENV_FILE="$GITHUB_ENV_FILE"
+GITHUB_SERVER="${GITHUB_SERVER_URL:-https://github.com}"
+GITHUB_SERVER="${GITHUB_SERVER%/}"
+BIN_DIR="$(cd "$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)"
+GH_APP_TOKEN="$(readlink -f -- "$BIN_DIR/gh-app-token")"
+GH_APP="$(readlink -f -- "$BIN_DIR/gh-app")"
+AUTH_MODE="plain"
+ROOT_REAL=""
+COMPONENT_RE='^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+
+usage() {
+  cat <<'EOF'
+Usage:
+  repo clone <owner>/<repo> [--upstream <owner>/<repo>]
+  repo clone <file:///path|/path> [--upstream <owner>/<repo>]
+  repo fork <upstream-owner>/<repo> <fork-owner>
+  repo list
+  repo switch <branch> [--create]
+  repo pr <number>
+  repo worktree <name> <branch>
+
+Clones go under /workspace/repos/<owner>/<repo>; local sources go under
+/workspace/repos/local/<name>. Worktrees go under
+/workspace/repos/.worktrees/<owner>/<repo>/<name>.
+
+Environment:
+  REPO_ROOT  clone root (default: /workspace/repos)
+EOF
+}
+
+die() { printf 'repo: %s\n' "$*" >&2; exit 1; }
+
+validate_component() {
+  local value="$1" label="$2"
+  case "$value" in
+    ''|-*|.|..) die "invalid $label '$value'" ;;
+  esac
+  [[ "$value" =~ $COMPONENT_RE ]] || die "invalid $label '$value'"
+}
+
+validate_slug() {
+  local slug="$1" owner name
+  case "$slug" in
+    */*/*) die "invalid repository '$slug'; expected <owner>/<repo>" ;;
+    */*) ;;
+    *) die "invalid repository '$slug'; expected <owner>/<repo>" ;;
+  esac
+  owner="${slug%%/*}"
+  name="${slug#*/}"
+  validate_component "$owner" "repository owner"
+  validate_component "$name" "repository name"
+}
+
+ensure_root() {
+  mkdir -p "$ROOT"
+  [ ! -L "$ROOT" ] || die "clone root must not be a symlink: $ROOT"
+  ROOT_REAL="$(realpath -m -- "$ROOT")"
+  local sub resolved
+  for sub in local .worktrees; do
+    [ ! -L "$ROOT/$sub" ] || die "clone path must not be a symlink: $ROOT/$sub"
+    [ ! -e "$ROOT/$sub" ] || {
+      resolved="$(realpath -m -- "$ROOT/$sub")"
+      case "$resolved" in
+        "$ROOT_REAL"|"$ROOT_REAL"/*) ;;
+        *) die "clone path escapes the clone root: $ROOT/$sub -> $resolved" ;;
+      esac
+    }
+  done
+}
+
+ensure_under() {
+  local path="$1" base="$2" label="$3"
+  local resolved_base resolved
+  resolved_base="$(realpath -m -- "$base")"
+  resolved="$(realpath -m -- "$path")"
+  case "$resolved" in
+    "$resolved_base"|"$resolved_base"/*) ;;
+    *) die "$label escapes $base: $path" ;;
+  esac
+}
+
+warn_clone_config() {
+  local dest="$1" file
+  for file in "$dest/opencode.json" "$dest/opencode.jsonc" \
+      "$dest/.opencode/opencode.json" "$dest/.opencode/opencode.jsonc"; do
+    if [ -f "$file" ] && grep -Eq '"(mcp|plugins|agents|skills)"' "$file"; then
+      printf 'repo: warning: %s configures project MCP, plugins, agents, or skills; project MCP and plugins are blocked, and clone agent/skill definitions are trusted input\n' "$file" >&2
+    fi
+  done
+  if [ -d "$dest/.opencode" ]; then
+    if find "$dest/.opencode" -maxdepth 3 \
+        \( -iname '*mcp*' -o -iname '*plugin*' -o -iname 'agent' -o -iname 'agents' \
+        -o -iname '*skill*' \) -print -quit 2>/dev/null | grep -q .; then
+      printf 'repo: warning: %s/.opencode defines agents, skills, MCP, or plugins; project MCP and plugins are blocked, and clone agent/skill definitions are trusted input\n' "$dest" >&2
+    fi
+  fi
+}
+
+app_configured() {
+  local var
+  for var in GITHUB_APP_CLIENT_ID GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID \
+    GITHUB_APP_PRIVATE_KEY_FILE; do
+    if [ -n "${!var:-}" ]; then
+      return 0
+    fi
+  done
+  if [ -f "$GITHUB_ENV_FILE" ]; then
+    for var in GITHUB_APP_CLIENT_ID GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID \
+      GITHUB_APP_PRIVATE_KEY_FILE; do
+      if grep -qE "^[[:space:]]*(export[[:space:]]+)?${var}=" "$GITHUB_ENV_FILE"; then
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+# Select GitHub authentication lazily, so local clone/list/worktree operations
+# never need credentials. An App that is configured but fails its check is a
+# hard error: never silently fall back to a PAT.
+select_auth() {
+  if [ "$AUTH_MODE" != "plain" ]; then
+    return 0
+  fi
+  if app_configured; then
+    if ! GITHUB_APP_ENV_FILE="$GITHUB_ENV_FILE" "$GH_APP_TOKEN" check >/dev/null; then
+      die "GitHub App authentication check failed; refusing to fall back to a PAT"
+    fi
+    AUTH_MODE="app"
+  else
+    if [ -z "${GITHUB_TOKEN:-}" ] && [ -f "$GITHUB_ENV_FILE" ]; then
+      set -a
+      # shellcheck disable=SC1090
+      . "$GITHUB_ENV_FILE"
+      set +a
+    fi
+    export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    AUTH_MODE="token"
+  fi
+}
+
+gh_run() {
+  if [ "$AUTH_MODE" = "app" ]; then
+    "$GH_APP" "$@"
+  else
+    gh "$@"
+  fi
+}
+
+remote_url() {
+  printf '%s/%s.git\n' "$GITHUB_SERVER" "$1"
+}
+
+fetch_remote() {
+  local dir="$1" remote="$2" host
+  if [ "$AUTH_MODE" = "app" ]; then
+    host="${GITHUB_SERVER#*://}"
+    host="${host%%/*}"
+    git -C "$dir" -c credential.helper= \
+      -c "credential.https://${host}.helper=!$GH_APP_TOKEN git-credential" \
+      fetch --prune "$remote"
+  else
+    git -C "$dir" fetch --prune "$remote"
+  fi
+}
+
+clone_slug() {
+  local slug="$1" upstream="${2:-}" owner name dest
+  validate_slug "$slug"
+  ensure_root
+  select_auth
+  owner="${slug%%/*}"
+  name="${slug#*/}"
+  dest="$ROOT/$owner/$name"
+  ensure_under "$dest" "$ROOT" "clone destination"
+  [ ! -e "$dest" ] || die "destination already exists: $dest"
+  mkdir -p "$ROOT/$owner"
+  gh_run repo clone "$slug" "$dest" >&2
+  warn_clone_config "$dest"
+  if [ -n "$upstream" ]; then
+    validate_slug "$upstream"
+    git -C "$dest" remote add upstream "$(remote_url "$upstream")"
+    fetch_remote "$dest" upstream
+  fi
+  printf '%s\n' "$dest"
+}
+
+clone_local() {
+  local source="$1" upstream="${2:-}" base dest
+  case "/$source/" in
+    */../*) die "clone source must not contain '..': $source" ;;
+  esac
+  base="$(basename "${source%/}")"
+  base="${base%.git}"
+  [ -n "$base" ] || die "cannot derive a repository name from '$source'"
+  validate_component "$base" "repository name"
+  ensure_root
+  dest="$ROOT/local/$base"
+  ensure_under "$dest" "$ROOT" "clone destination"
+  [ ! -e "$dest" ] || die "destination already exists: $dest"
+  mkdir -p "$(dirname "$dest")"
+  git clone "$source" "$dest"
+  warn_clone_config "$dest"
+  if [ -n "$upstream" ]; then
+    validate_slug "$upstream"
+    select_auth
+    git -C "$dest" remote add upstream "$(remote_url "$upstream")"
+    fetch_remote "$dest" upstream
+  fi
+  printf '%s\n' "$dest"
+}
+
+cmd_clone() {
+  local source="" upstream=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --upstream)
+        [ "$#" -ge 2 ] || die "--upstream requires <owner>/<repo>"
+        upstream="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        die "unknown clone option: $1"
+        ;;
+      *)
+        [ -z "$source" ] || die "clone accepts a single source"
+        source="$1"
+        shift
+        ;;
+    esac
+  done
+  [ -n "$source" ] || die "clone requires <owner>/<repo> or a local path"
+  case "$source" in
+    file://*|/*|./*|../*)
+      clone_local "$source" "$upstream"
+      ;;
+    *)
+      if [ -d "$source" ]; then
+        clone_local "$source" "$upstream"
+      elif [[ "$source" != *://* && "$source" != *:* ]]; then
+        clone_slug "$source" "$upstream"
+      else
+        die "unsupported clone source: $source"
+      fi
+      ;;
+  esac
+}
+
+cmd_fork() {
+  [ "$#" -eq 2 ] || die "usage: repo fork <upstream-owner>/<repo> <fork-owner>"
+  local upstream="$1" fork_owner="$2" name
+  validate_slug "$upstream"
+  validate_component "$fork_owner" "fork owner"
+  name="${upstream#*/}"
+  clone_slug "$fork_owner/$name" "$upstream"
+}
+
+cmd_list() {
+  ensure_root
+  local found=0 gitdir dir branch state rel
+  while IFS= read -r -d '' gitdir; do
+    dir="${gitdir%/.git}"
+    case "$dir" in
+      "$ROOT/.worktrees"|"$ROOT/.worktrees/"*) continue ;;
+    esac
+    branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || printf '?')"
+    if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+      state="dirty"
+    else
+      state="clean"
+    fi
+    rel="${dir#"$ROOT"/}"
+    printf '%-50s %-20s %s\n' "$rel" "$branch" "$state"
+    found=1
+  done < <(find "$ROOT" -mindepth 2 -maxdepth 4 -type d -name .git -print0 2>/dev/null)
+  [ "$found" -eq 1 ] || printf 'No clones under %s\n' "$ROOT"
+}
+
+cmd_switch() {
+  local branch="" create=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --create)
+        create=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        die "unknown switch option: $1"
+        ;;
+      *)
+        [ -z "$branch" ] || die "switch accepts a single branch"
+        branch="$1"
+        shift
+        ;;
+    esac
+  done
+  [ -n "$branch" ] || die "usage: repo switch <branch> [--create]"
+  case "$branch" in
+    -*) die "invalid branch '$branch'" ;;
+  esac
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "switch must run inside a clone"
+  if [ "$create" -eq 1 ]; then
+    git switch -c "$branch"
+  else
+    git switch "$branch"
+  fi
+}
+
+cmd_pr() {
+  [ "$#" -eq 1 ] || die "usage: repo pr <number>"
+  [[ "$1" =~ ^[0-9]+$ ]] || die "invalid pull request number '$1'"
+  select_auth
+  gh_run pr checkout "$1"
+}
+
+identify_from_url() {
+  local url="$1" rest
+  case "$url" in
+    git@*:*)
+      rest="${url#*:}"
+      ;;
+    ssh://*|http://*|https://*)
+      rest="${url#*://}"
+      rest="${rest#*/}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  rest="${rest%/}"
+  rest="${rest%.git}"
+  case "$rest" in
+    */*) printf '%s\n' "$rest" ;;
+    *) return 1 ;;
+  esac
+}
+
+repo_identity() {
+  local url top rel ident
+  url="$(git remote get-url origin 2>/dev/null || true)"
+  if [ -n "$url" ] && ident="$(identify_from_url "$url")"; then
+    printf '%s\n' "$ident"
+    return 0
+  fi
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  rel="${top#"$ROOT"/}"
+  if [ "$rel" = "$top" ]; then
+    rel="local/$(basename "$top")"
+  fi
+  case "$rel" in
+    */*) ;;
+    *) rel="local/$rel" ;;
+  esac
+  printf '%s\n' "$rel"
+}
+
+cmd_worktree() {
+  [ "$#" -eq 2 ] || die "usage: repo worktree <name> <branch>"
+  local name="$1" branch="$2" identity owner repo dest
+  validate_component "$name" "worktree name"
+  case "$branch" in
+    ''|-*) die "invalid branch '$branch'" ;;
+  esac
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "worktree must run inside a clone"
+  identity="$(repo_identity)" || die "cannot determine the clone identity"
+  validate_slug "$identity"
+  owner="${identity%%/*}"
+  repo="${identity#*/}"
+  ensure_root
+  dest="$ROOT/.worktrees/$owner/$repo/$name"
+  ensure_under "$dest" "$ROOT/.worktrees" "worktree destination"
+  [ ! -e "$dest" ] || die "worktree already exists: $dest"
+  mkdir -p "$(dirname "$dest")"
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git worktree add "$dest" "$branch" >&2
+  elif git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    git worktree add --track -b "$branch" "$dest" "origin/$branch" >&2
+  else
+    git worktree add -b "$branch" "$dest" >&2
+  fi
+  printf '%s\n' "$dest"
+}
+
+command="${1:-}"
+if [ -z "$command" ]; then
+  usage >&2
+  exit 2
+fi
+shift
+case "$command" in
+  clone) cmd_clone "$@" ;;
+  fork) cmd_fork "$@" ;;
+  list) cmd_list ;;
+  switch) cmd_switch "$@" ;;
+  pr) cmd_pr "$@" ;;
+  worktree) cmd_worktree "$@" ;;
+  -h|--help|help) usage ;;
+  *)
+    usage >&2
+    die "unknown command: $command"
+    ;;
+esac

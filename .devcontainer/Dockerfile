@@ -81,12 +81,11 @@ RUN mkdir -p \
   /home/$USERNAME/.local/share/nvim \
   /home/$USERNAME/.config/opencode \
   /home/$USERNAME/.kube \
-  /worktrees \
   && chown -R $USERNAME:$USERNAME \
   /home/$USERNAME/.local \
   /home/$USERNAME/.config \
   /home/$USERNAME/.kube \
-  /worktrees
+  && ln -s /workspace/repos /worktrees
 
 
 # Install yq (mikefarah/yq v4) at a pinned version. dpkg's arch names match

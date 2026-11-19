@@ -2,7 +2,6 @@
 set -euo pipefail
 
 GITHUB_ENV_FILE="$HOME/.dc/github/.env"
-BRAVE_ENV_FILE="$HOME/.dc/brave/.env"
 DEV_USER="${SUDO_USER:-$(id -un)}"
 
 # --- timezone ---
@@ -57,8 +56,8 @@ if [ "$(cat /etc/timezone 2>/dev/null || true)" != "$TZ" ]; then
 fi
 
 # Read the GitHub token in a subshell so the rest of the script's child
-# processes do not inherit it. The .bashrc blocks further down load the env
-# files for future interactive shells.
+# processes do not inherit it. The .bashrc block further down loads the env
+# file for future interactive shells.
 github_token=""
 if [ -f "$GITHUB_ENV_FILE" ]; then
   echo "Loading GitHub env ($GITHUB_ENV_FILE)..."
@@ -85,7 +84,89 @@ done
 # Repair ownership for existing volumes. Fresh volumes inherit developer
 # ownership from the pre-created directories in the Dockerfile. Chown the
 # parent directories too so tools can create new files under them.
-sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees
+sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"
+
+# --- multi-repo workspace ---
+# Clones live in the bind-mounted workspace so they persist without a named
+# volume. /worktrees is a compatibility symlink.
+echo "Configuring multi-repo workspace..."
+mkdir -p /workspace/repos
+if [ -L /worktrees ]; then
+  if [ "$(readlink /worktrees)" != "/workspace/repos" ]; then
+    sudo -n rm -f /worktrees
+    sudo -n ln -s /workspace/repos /worktrees
+  fi
+elif mountpoint -q /worktrees 2>/dev/null; then
+  echo "WARNING: /worktrees is an old volume mountpoint. Move its contents to" \
+    "/workspace/repos, remove the worktrees volume from devcontainer.json, and" \
+    "recreate the container. Then run 'git worktree repair' in each clone." >&2
+elif [ -d /worktrees ]; then
+  if [ -z "$(ls -A /worktrees 2>/dev/null)" ]; then
+    sudo -n rmdir /worktrees
+    sudo -n ln -s /workspace/repos /worktrees
+  else
+    echo "WARNING: /worktrees is a non-empty directory. Move its contents to" \
+      "/workspace/repos and recreate the container. Then run 'git worktree repair'" \
+      "in each clone; /worktrees was left untouched." >&2
+  fi
+else
+  sudo -n ln -s /workspace/repos /worktrees
+fi
+
+# --- opencode host secrets ---
+# The host overlay references secrets as {file:/etc/opencode/...}. Validate
+# those references before OpenCode starts; never print the file contents.
+while IFS= read -r secret; do
+  if [ ! -f "$secret" ]; then
+    echo "Missing host secret: $secret" >&2
+    exit 1
+  fi
+  if [ ! -r "$secret" ]; then
+    echo "Unreadable host secret: $secret" >&2
+    exit 1
+  fi
+  if [ ! -s "$secret" ]; then
+    echo "Empty host secret: $secret" >&2
+    exit 1
+  fi
+done < <(
+  find /etc/opencode -type f \( -name opencode.json -o -name opencode.jsonc \) -print0 2>/dev/null |
+    xargs -0 -r grep -hoE '\{file:/etc/opencode/[^}]+\}' 2>/dev/null |
+    sed -e 's/^{file://' -e 's/}$//' |
+    sort -u
+)
+
+# --- opencode control plane ---
+OC_SRC="/workspace/.opencode"
+if [ -d "$OC_SRC" ]; then
+  mkdir -p "$HOME/.config/opencode/agents" "$HOME/.config/opencode/skills"
+  if [ ! -e "$HOME/.config/opencode/opencode.json" ] || [ -L "$HOME/.config/opencode/opencode.json" ]; then
+    ln -sfn "$OC_SRC/opencode.global.json" "$HOME/.config/opencode/opencode.json"
+  fi
+  for src in "$OC_SRC"/agents/*.md; do
+    [ -e "$src" ] || continue
+    dest="$HOME/.config/opencode/agents/$(basename "$src")"
+    if [ ! -e "$dest" ] || [ -L "$dest" ]; then
+      ln -sfn "$src" "$dest"
+    fi
+  done
+  for src in "$OC_SRC"/skills/*; do
+    [ -d "$src" ] || continue
+    dest="$HOME/.config/opencode/skills/$(basename "$src")"
+    if [ ! -e "$dest" ] || [ -L "$dest" ]; then
+      ln -sfn "$src" "$dest"
+    fi
+  done
+  # Remove stale links that point into the control plane but whose source is gone.
+  for link in "$HOME/.config/opencode/agents"/* "$HOME/.config/opencode/skills"/*; do
+    [ -L "$link" ] || continue
+    case "$(readlink "$link")" in
+      "$OC_SRC"/*)
+        [ -e "$link" ] || rm -f "$link"
+        ;;
+    esac
+  done
+fi
 
 echo "Installing GitHub App helper commands..."
 for helper in gh-app-token gh-app; do
@@ -94,6 +175,11 @@ for helper in gh-app-token gh-app; do
     ln -sfn "$src" "$HOME/.local/bin/$helper"
   fi
 done
+echo "Installing repo helper command..."
+src="/workspace/.devcontainer/bin/repo"
+if [ -x "$src" ]; then
+  ln -sfn "$src" "$HOME/.local/bin/repo"
+fi
 
 # Kubernetes client-go locks every file listed in KUBECONFIG. On macOS
 # VirtioFS bind mounts the lock file can be created with mode 000, which makes
@@ -130,19 +216,6 @@ GITHUB_ENV_FILE="$GITHUB_ENV_FILE"
 if [ -f "$GITHUB_ENV_FILE" ]; then
   set -a
   . "$GITHUB_ENV_FILE"
-  set +a
-fi
-EOF
-fi
-
-if ! grep -qF '# --- brave env ---' "$HOME/.bashrc" 2>/dev/null; then
-  cat >>"$HOME/.bashrc" <<EOF
-
-# --- brave env ---
-BRAVE_ENV_FILE="$BRAVE_ENV_FILE"
-if [ -f "$BRAVE_ENV_FILE" ]; then
-  set -a
-  . "$BRAVE_ENV_FILE"
   set +a
 fi
 EOF
