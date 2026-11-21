@@ -26,10 +26,10 @@
 
 ## 4. Rewire agents and instructions
 
-- [ ] 4.1 Update `.opencode/AGENTS.md` to remove Superpowers skill references, add OpenSpec commands, and keep the TDD policy and worker rules, then verify every referenced skill exists.
-- [ ] 4.2 Update `.opencode/agents/orchestrator.md` and `task-enumerator.md` for OpenSpec artifacts and task briefs, then verify the static checks.
-- [ ] 4.3 Update `implementer.md` and `validator.md` to reference the native TDD and verification skills, then verify the prompts require RED/GREEN evidence and an independent rerun.
-- [ ] 4.4 Update `design.md` and `rubber-duck.md` to use OpenSpec design artifacts for critique, then verify a dry-run design review.
+- [x] 4.1 Update `.opencode/AGENTS.md` to remove Superpowers skill references, add OpenSpec commands, and keep the TDD policy and worker rules, then verify every referenced skill exists.
+- [x] 4.2 Update `.opencode/agents/orchestrator.md` and `task-enumerator.md` for OpenSpec artifacts and task briefs, then verify the static checks.
+- [x] 4.3 Update `implementer.md` and `validator.md` to reference the native TDD and verification skills, then verify the prompts require RED/GREEN evidence and an independent rerun.
+- [x] 4.4 Update `design.md` and `rubber-duck.md` to use OpenSpec design artifacts for critique, then verify a dry-run design review.
 
 ## 5. Documentation and attribution
 
