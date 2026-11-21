@@ -7,8 +7,6 @@
 # /tmp/opencode so the repository tree is never touched.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="${REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 WORK_ROOT="/tmp/opencode/openspec-workflow-$$"
 CHANGE="sample-change"
 CAPABILITY="sample"
@@ -20,7 +18,8 @@ bad() { printf 'FAIL %s\n' "$*" >&2; fail=1; }
 cleanup() {
   rm -rf -- "$WORK_ROOT"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 if ! command -v openspec >/dev/null 2>&1; then
   echo "FAIL: openspec not found on PATH" >&2

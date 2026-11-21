@@ -66,7 +66,7 @@ fi
 
 # 3. The planning step does not present `openspec propose` as a shell command.
 #    It points at the generated skill or the real CLI commands instead.
-if grep -qF '`openspec propose`' "$orchestration"; then
+if grep -qF 'openspec propose' "$orchestration"; then
   bad "orchestration does not present openspec propose as a shell command"
 else
   pass "orchestration does not present openspec propose as a shell command"
