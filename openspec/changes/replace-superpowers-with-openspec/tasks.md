@@ -39,8 +39,8 @@
 
 ## 6. Integration verification
 
-- [ ] 6.1 Run `test/devcontainer-smoke.sh` and fix any failures, then verify exit 0.
-- [ ] 6.2 In a disposable repository, run `openspec init`, create a change, validate it, and archive it, then verify the living spec updates and no plugin is required.
+- [x] 6.1 Run `test/devcontainer-smoke.sh` and fix any failures, then verify exit 0.
+- [x] 6.2 In a disposable repository, run `openspec init`, create a change, validate it, and archive it, then verify the living spec updates and no plugin is required.
 - [ ] 6.3 Run the orchestrator on a small task using the new flow, then verify the proposal, tasks, RED/GREEN evidence, validator PASS, and security-reviewer PASS.
 
 ## 7. Final gates
