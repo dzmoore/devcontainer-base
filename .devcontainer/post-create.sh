@@ -185,7 +185,59 @@ fi
 # Node is provided by the devcontainer Node feature, not the Dockerfile build
 # stage, so install the pinned CLI here. Re-running post-create must not
 # reinstall an already-correct version.
+
+# Compare dotted version strings without relying on GNU sort -V.
+version_ge() {
+  local have="${1#v}" want="${2#v}"
+  local IFS='.'
+  local -a have_parts want_parts
+  read -r -a have_parts <<<"$have"
+  read -r -a want_parts <<<"$want"
+  local i h w
+  for i in 0 1 2; do
+    h="${have_parts[$i]:-0}"
+    w="${want_parts[$i]:-0}"
+    if ((10#$h > 10#$w)); then
+      return 0
+    fi
+    if ((10#$h < 10#$w)); then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# OpenSpec 2.1.1 requires Node.js 22.20.0 or newer.
+require_node_version() {
+  local required="22.20.0" actual
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js is not installed; OpenSpec 2.1.1 requires Node.js $required or newer" >&2
+    return 1
+  fi
+  actual="$(node --version 2>/dev/null || true)"
+  if ! version_ge "$actual" "$required"; then
+    echo "Node.js ${actual:-unknown} is too old; OpenSpec 2.1.1 requires Node.js $required or newer" >&2
+    return 1
+  fi
+}
+
+require_openspec_version() {
+  local required="2.1.1" output version
+  if ! command -v openspec >/dev/null 2>&1; then
+    echo "OpenSpec is not installed; expected $required" >&2
+    return 1
+  fi
+  output="$(openspec --version 2>&1 || true)"
+  version="$(printf '%s\n' "$output" |
+    grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+  if [ "$version" != "$required" ]; then
+    echo "OpenSpec version mismatch: expected $required, got '$output'" >&2
+    return 1
+  fi
+}
+
 echo "Configuring OpenSpec 2.1.1..."
+require_node_version || exit 1
 if ! command -v openspec >/dev/null 2>&1 ||
   [ "$(openspec --version 2>/dev/null |
        grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" != "2.1.1" ]; then
@@ -193,6 +245,7 @@ if ! command -v openspec >/dev/null 2>&1 ||
   npm install -g @fission-ai/openspec@2.1.1
 fi
 echo "Verifying OpenSpec..."
+require_openspec_version || exit 1
 openspec --version
 
 # Kubernetes client-go locks every file listed in KUBECONFIG. On macOS

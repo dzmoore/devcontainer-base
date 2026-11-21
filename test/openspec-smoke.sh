@@ -104,6 +104,69 @@ else
   fi
 fi
 
+# 7. post-create.sh enforces the toolchain versions OpenSpec 2.1.1 requires.
+extract_function() {
+  local name="$1"
+  awk -v fn="$name" '
+    $0 ~ ("^" fn "\\(\\) \\{") { capture = 1 }
+    capture { print }
+    capture && $0 == "}" { exit }
+  ' "$post_create"
+}
+
+version_ge_src="$(extract_function version_ge)"
+node_guard_src="$(extract_function require_node_version)"
+openspec_guard_src="$(extract_function require_openspec_version)"
+
+if [ -z "$version_ge_src" ] || [ -z "$node_guard_src" ]; then
+  bad "post-create.sh defines a Node.js version guard"
+elif ! (
+  eval "$version_ge_src"
+  eval "$node_guard_src"
+  node() { printf 'v22.19.9\n'; }
+  if require_node_version >/dev/null 2>&1; then exit 1; fi
+  node() { printf 'v22.20.0\n'; }
+  require_node_version >/dev/null 2>&1 || exit 1
+  node() { printf 'v26.13.1\n'; }
+  require_node_version >/dev/null 2>&1 || exit 1
+); then
+  bad "post-create.sh rejects Node.js below 22.20.0"
+else
+  pass "post-create.sh rejects Node.js below 22.20.0"
+fi
+
+node_guard_calls="$(grep -cE '^[^#]*require_node_version' "$post_create" || true)"
+if [ "$node_guard_calls" -ge 2 ]; then
+  pass "post-create.sh invokes the Node.js version guard"
+else
+  bad "post-create.sh invokes the Node.js version guard (found $node_guard_calls references)"
+fi
+
+if [ -z "$openspec_guard_src" ]; then
+  bad "post-create.sh defines an OpenSpec version assertion"
+elif ! (
+  eval "$openspec_guard_src"
+  openspec() { printf '2.0.0\n'; }
+  if require_openspec_version >/dev/null 2>&1; then exit 1; fi
+  openspec() { printf '2.1.1\n'; }
+  require_openspec_version >/dev/null 2>&1 || exit 1
+  openspec() { printf 'openspec 2.1.1\n'; }
+  require_openspec_version >/dev/null 2>&1 || exit 1
+  openspec() { printf '2.1.10\n'; }
+  if require_openspec_version >/dev/null 2>&1; then exit 1; fi
+); then
+  bad "post-create.sh rejects an OpenSpec version other than 2.1.1"
+else
+  pass "post-create.sh rejects an OpenSpec version other than 2.1.1"
+fi
+
+openspec_guard_calls="$(grep -cE '^[^#]*require_openspec_version' "$post_create" || true)"
+if [ "$openspec_guard_calls" -ge 2 ]; then
+  pass "post-create.sh invokes the OpenSpec version assertion"
+else
+  bad "post-create.sh invokes the OpenSpec version assertion (found $openspec_guard_calls references)"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "OPENSPEC SMOKE FAILED" >&2
   exit 1
