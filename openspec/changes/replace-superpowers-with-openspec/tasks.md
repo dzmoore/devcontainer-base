@@ -5,24 +5,24 @@
 
 ## 1. Pin and initialize OpenSpec
 
-- [ ] 1.1 Add `@fission-ai/openspec@2.1.1` and the Node 22.20+ requirement to `.devcontainer/post-create.sh`, then verify `openspec --version` prints `2.1.1` in a built container.
-- [ ] 1.2 Run `openspec init --tools opencode --scope project --profile core`, commit `openspec/` and `.agents/skills/`, and verify `openspec validate --strict` succeeds with no plugin file created.
+- [x] 1.1 Add `@fission-ai/openspec@2.1.1` and the Node 22.20+ requirement to `.devcontainer/post-create.sh`, then verify `openspec --version` prints `2.1.1` in a built container.
+- [x] 1.2 Run `openspec init --tools opencode --scope project --profile core`, commit `openspec/` and `.agents/skills/`, and verify `openspec validate --strict` succeeds with no plugin file created.
 
 ## 2. Remove the Superpowers runtime
 
-- [ ] 2.1 Remove the plugin entry from `.opencode/opencode.global.json` and verify a new session starts with the orchestrator and no Superpowers bootstrap.
-- [ ] 2.2 Delete `.opencode/superpowers/`, `.opencode/superpowers.lock`, `.opencode/superpowers-local.patch`, and `scripts/update-superpowers.sh`, then verify the paths are gone and `git grep -i superpowers` returns only historical documentation.
-- [ ] 2.3 Update `test/devcontainer-smoke.sh` to assert the vendored tree is absent and the OpenSpec tree is present, and verify the static suite fails before the code change and passes after.
+- [x] 2.1 Remove the plugin entry from `.opencode/opencode.global.json` and verify a new session starts with the orchestrator and no Superpowers bootstrap.
+- [x] 2.2 Delete `.opencode/superpowers/`, `.opencode/superpowers.lock`, `.opencode/superpowers-local.patch`, and `scripts/update-superpowers.sh`, then verify the paths are gone and `git grep -i superpowers` returns only historical documentation.
+- [x] 2.3 Update `test/devcontainer-smoke.sh` to assert the vendored tree is absent and the OpenSpec tree is present, and verify the static suite fails before the code change and passes after.
 
 ## 3. Add native skills
 
-- [ ] 3.1 Write `.opencode/skills/test-driven-development/SKILL.md` with red, green, refactor, the evidence format, and the exception policy, then verify the implementer prompt references the same skill ID.
-- [ ] 3.2 Write `.opencode/skills/systematic-debugging/SKILL.md` with reproduce, isolate, root cause, minimal fix, and regression test, then verify a sample bug report follows it.
-- [ ] 3.3 Write `.opencode/skills/verification-before-completion/SKILL.md` with the evidence checklist, then verify the implementer and validator prompts reference it.
-- [ ] 3.4 Write `.opencode/skills/receiving-code-review/SKILL.md` with the finding-triage and verification loop, then verify the implementer prompt references it.
-- [ ] 3.5 Write `.opencode/skills/using-git-worktrees/SKILL.md` with create, move, remove, and path rules, then verify the commands against a scratch repository.
-- [ ] 3.6 Write `.opencode/skills/finishing-a-development-branch/SKILL.md` with test, review, commit, merge, and cleanup, then verify the checklist against a scratch branch.
-- [ ] 3.7 Extend `.opencode/skills/orchestration/SKILL.md` with the OpenSpec artifact flow and the OpenSpec/validator boundary, remove references to `brainstorming`, `writing-plans`, and `subagent-driven-development`, then verify it names `openspec propose` and does not name `/openspec-apply-change` as the implementation controller.
+- [x] 3.1 Write `.opencode/skills/test-driven-development/SKILL.md` with red, green, refactor, the evidence format, and the exception policy, then verify the implementer prompt references the same skill ID.
+- [x] 3.2 Write `.opencode/skills/systematic-debugging/SKILL.md` with reproduce, isolate, root cause, minimal fix, and regression test, then verify a sample bug report follows it.
+- [x] 3.3 Write `.opencode/skills/verification-before-completion/SKILL.md` with the evidence checklist, then verify the implementer and validator prompts reference it.
+- [x] 3.4 Write `.opencode/skills/receiving-code-review/SKILL.md` with the finding-triage and verification loop, then verify the implementer prompt references it.
+- [x] 3.5 Write `.opencode/skills/using-git-worktrees/SKILL.md` with create, move, remove, and path rules, then verify the commands against a scratch repository.
+- [x] 3.6 Write `.opencode/skills/finishing-a-development-branch/SKILL.md` with test, review, commit, merge, and cleanup, then verify the checklist against a scratch branch.
+- [x] 3.7 Extend `.opencode/skills/orchestration/SKILL.md` with the OpenSpec artifact flow and the OpenSpec/validator boundary, remove references to `brainstorming`, `writing-plans`, and `subagent-driven-development`, then verify it names `openspec propose` and does not name `/openspec-apply-change` as the implementation controller.
 
 ## 4. Rewire agents and instructions
 
