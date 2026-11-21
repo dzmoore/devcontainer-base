@@ -248,6 +248,18 @@ echo "Verifying OpenSpec..."
 require_openspec_version || exit 1
 openspec --version
 
+# OpenSpec enables anonymous telemetry by default. containerEnv sets
+# OPENSPEC_TELEMETRY=0 and DO_NOT_TRACK=1 for every shell, and this persists the
+# config key so the setting holds without the environment. Fail loudly if the
+# pinned CLI ignores it.
+echo "Disabling OpenSpec telemetry..."
+openspec config set telemetry.enabled false
+telemetry_enabled="$(openspec config get telemetry.enabled 2>/dev/null || true)"
+if [ "$telemetry_enabled" != "false" ]; then
+  echo "OpenSpec telemetry is still enabled (telemetry.enabled='$telemetry_enabled')" >&2
+  exit 1
+fi
+
 # Kubernetes client-go locks every file listed in KUBECONFIG. On macOS
 # VirtioFS bind mounts the lock file can be created with mode 000, which makes
 # kind fail with "config.lock: permission denied". Keep the writable default

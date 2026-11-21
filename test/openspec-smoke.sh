@@ -2,6 +2,10 @@
 # Focused smoke test for the OpenSpec toolchain and repository initialization.
 set -euo pipefail
 
+# The validation below runs the pinned CLI; do not emit telemetry from a test.
+export OPENSPEC_TELEMETRY=0
+export DO_NOT_TRACK=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$REPO"
@@ -198,6 +202,103 @@ if [ "$openspec_guard_calls" -ge 2 ]; then
   pass "post-create.sh invokes the OpenSpec version assertion"
 else
   bad "post-create.sh invokes the OpenSpec version assertion (found $openspec_guard_calls references)"
+fi
+
+# 8. OpenSpec telemetry is disabled in the container and by the toolchain.
+devcontainer_json=".devcontainer/devcontainer.json"
+if [ ! -f "$devcontainer_json" ]; then
+  bad "$devcontainer_json exists"
+elif ! command -v python3 >/dev/null 2>&1; then
+  bad "python3 is available to inspect $devcontainer_json"
+else
+  telemetry_missing="$(python3 - "$devcontainer_json" 2>/dev/null <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    container_env = json.load(handle).get("containerEnv", {})
+missing = [
+    f"{key}={want}"
+    for key, want in (("OPENSPEC_TELEMETRY", "0"), ("DO_NOT_TRACK", "1"))
+    if container_env.get(key) != want
+]
+print(", ".join(missing))
+PY
+)" || telemetry_missing="invalid-json"
+  if [ -z "$telemetry_missing" ]; then
+    pass "devcontainer.json disables telemetry in containerEnv"
+  else
+    bad "devcontainer.json sets OPENSPEC_TELEMETRY=0 and DO_NOT_TRACK=1 (missing: $telemetry_missing)"
+  fi
+fi
+
+if [ ! -f "$post_create" ]; then
+  bad "$post_create exists for the telemetry opt-out"
+else
+  if grep -qF 'openspec config set telemetry.enabled false' "$post_create"; then
+    pass "post-create.sh disables OpenSpec telemetry"
+  else
+    bad "post-create.sh disables OpenSpec telemetry"
+  fi
+  if grep -qF 'openspec config get telemetry.enabled' "$post_create"; then
+    pass "post-create.sh verifies the telemetry setting"
+  else
+    bad "post-create.sh verifies the telemetry setting"
+  fi
+fi
+
+mkdir -p /tmp/opencode
+telemetry_root="$(mktemp -d /tmp/opencode/openspec-telemetry.XXXXXX)"
+cleanup_telemetry() { rm -rf -- "${telemetry_root:-}"; }
+trap cleanup_telemetry EXIT
+if (
+  export HOME="$telemetry_root/home"
+  export XDG_CONFIG_HOME="$telemetry_root/config"
+  export XDG_DATA_HOME="$telemetry_root/data"
+  mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+  openspec config set telemetry.enabled false >/dev/null 2>&1
+  [ "$(openspec config get telemetry.enabled 2>/dev/null || true)" = "false" ]
+); then
+  pass "openspec config telemetry.enabled false persists in an isolated home"
+else
+  bad "openspec config telemetry.enabled false persists in an isolated home"
+fi
+
+# 9. The disposable workflow test isolates global OpenSpec state and telemetry.
+workflow_smoke="test/openspec-workflow-smoke.sh"
+if [ ! -f "$workflow_smoke" ]; then
+  bad "$workflow_smoke exists"
+else
+  isolation_missing=""
+  for assignment in \
+    'export HOME="$WORK_ROOT/home"' \
+    'export XDG_CONFIG_HOME="$WORK_ROOT/config"' \
+    'export XDG_DATA_HOME="$WORK_ROOT/data"' \
+    'export OPENSPEC_TELEMETRY=0' \
+    'export DO_NOT_TRACK=1'; do
+    grep -qF "$assignment" "$workflow_smoke" || isolation_missing="$isolation_missing [$assignment]"
+  done
+  mkdir_lines="$(grep -E '^[[:space:]]*mkdir -p ' "$workflow_smoke" || true)"
+  for dir_var in HOME XDG_CONFIG_HOME XDG_DATA_HOME; do
+    printf '%s\n' "$mkdir_lines" | grep -qF "\"\$$dir_var\"" ||
+      isolation_missing="$isolation_missing [mkdir \$$dir_var]"
+  done
+  if [ -z "$isolation_missing" ]; then
+    pass "openspec-workflow-smoke.sh isolates HOME and telemetry state"
+  else
+    bad "openspec-workflow-smoke.sh isolates HOME and telemetry state (missing:$isolation_missing)"
+  fi
+
+  first_openspec_line="$(grep -nE '(^|[[:space:]])openspec[[:space:]]' "$workflow_smoke" |
+    head -n1 | cut -d: -f1)"
+  last_export_line="$(grep -nE '^[[:space:]]*export[[:space:]]+(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME|OPENSPEC_TELEMETRY|DO_NOT_TRACK)=' "$workflow_smoke" |
+    tail -n1 | cut -d: -f1 || true)"
+  if [ -n "$last_export_line" ] && [ -n "$first_openspec_line" ] &&
+    [ "$last_export_line" -lt "$first_openspec_line" ]; then
+    pass "openspec-workflow-smoke.sh isolates the environment before calling openspec"
+  else
+    bad "openspec-workflow-smoke.sh isolates the environment before calling openspec"
+  fi
 fi
 
 if [ "$fail" -ne 0 ]; then

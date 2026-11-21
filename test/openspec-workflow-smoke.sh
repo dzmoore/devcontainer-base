@@ -11,6 +11,14 @@ WORK_ROOT="/tmp/opencode/openspec-workflow-$$"
 CHANGE="sample-change"
 CAPABILITY="sample"
 
+# Keep OpenSpec config and data inside the disposable tree, and disable
+# telemetry, so the test never reads or writes the caller's global state.
+export HOME="$WORK_ROOT/home"
+export XDG_CONFIG_HOME="$WORK_ROOT/config"
+export XDG_DATA_HOME="$WORK_ROOT/data"
+export OPENSPEC_TELEMETRY=0
+export DO_NOT_TRACK=1
+
 fail=0
 pass() { printf 'PASS %s\n' "$*"; }
 bad() { printf 'FAIL %s\n' "$*" >&2; fail=1; }
@@ -36,7 +44,7 @@ fi
 
 mkdir -p /tmp/opencode
 rm -rf -- "$WORK_ROOT"
-mkdir -p "$WORK_ROOT"
+mkdir -p "$WORK_ROOT" "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
 cd "$WORK_ROOT"
 
 git init -q .

@@ -37,7 +37,9 @@
     "TZ": "${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}",
     "STARSHIP_CONFIG": "/workspace/.devcontainer/starship.toml",
     "EDITOR": "nvim",
-    "VISUAL": "nvim"
+    "VISUAL": "nvim",
+    "OPENSPEC_TELEMETRY": "0",
+    "DO_NOT_TRACK": "1"
   },
   "remoteEnv": {
     "PATH": "${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin",
