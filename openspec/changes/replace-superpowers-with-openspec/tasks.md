@@ -41,12 +41,12 @@
 
 - [x] 6.1 Run `test/devcontainer-smoke.sh static` and the focused suites, fix failures, and verify exit 0. The container/`all` modes require the `devcontainer` CLI, which is unavailable in this environment.
 - [x] 6.2 In a disposable repository, run `openspec init`, create a change, validate it, and archive it, then verify the living spec updates and no plugin is required.
-- [ ] 6.3 Run the orchestrator on a small task using the new flow, then verify the proposal, tasks, RED/GREEN evidence, validator PASS, and security-reviewer PASS.
+- [x] 6.3 Run the orchestrator on a small task using the new flow, then verify the proposal, tasks, RED/GREEN evidence, validator PASS, and security-reviewer PASS.
 
 ## 7. Final gates
 
-- [ ] 7.1 Dispatch the validator on the full tree and verify PASS with command output.
-- [ ] 7.2 Dispatch the security-reviewer and verify PASS or fixed findings.
+- [x] 7.1 Dispatch the validator on the full tree and verify PASS with command output.
+- [x] 7.2 Dispatch the security-reviewer and verify PASS or fixed findings.
 
 ## Workflow follow-up
 

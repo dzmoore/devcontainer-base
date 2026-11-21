@@ -40,6 +40,15 @@ The nine agents remain. The native skill set is: the existing `orchestration` sk
 
 `.devcontainer/post-create.sh` installs `@fission-ai/openspec@2.1.1` and requires Node 22.20 or newer. Each target repository runs `openspec init` once. The control plane detects a missing `openspec/` root and stops rather than creating it implicitly. The alternative, using `latest`, was rejected because OpenSpec shipped two breaking majors in eight days in November 2026.
 
+### Security hardening
+
+- OpenSpec telemetry is disabled in `containerEnv` (`OPENSPEC_TELEMETRY=0`, `DO_NOT_TRACK=1`) and persisted with `openspec config set telemetry.enabled false`.
+- The orchestrator edit scope is `openspec/changes/**`, not all of `openspec/**`; living specs change through archive.
+- The global npm install uses `--ignore-scripts --no-audit --no-fund`.
+- Smoke tests reject executable files, shell or JavaScript payloads, and `scripts/` directories in generated and native skill trees.
+- The ledger slug is validated and the resolved ledger root must stay under `.superpowers/sdd/`.
+- The test harness rejects unsafe extracted snippets before evaluation.
+
 ## Risks / Trade-offs
 
 - [OpenSpec is maintained by a small team and has breaking releases] -> Pin 2.1.1 in the image, treat upgrades as planned changes, and keep the generated skills under version control.
