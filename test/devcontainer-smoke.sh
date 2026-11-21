@@ -366,8 +366,11 @@ if global_path.is_file():
             for rule in global_policies)
     check(has_global_policy('mcp.use', '*', 'deny'),
           'global config must deny mcp.use * in policies')
-    check(not any(rule.get('action') == 'plugin.use' for rule in global_policies),
-          'global config must not carry a plugin.use policy')
+    check(has_global_policy('plugin.use', '*', 'deny'),
+          'global config must deny plugin.use * in policies')
+    check(not any(rule.get('action') == 'plugin.use' and rule.get('effect') == 'allow'
+                  for rule in global_policies),
+          'global config must not allow any plugin.use rule')
     for action in ('mcp.use', 'plugin.use'):
         check(not any(rule.get('action') == action for rule in global_perms),
               f'global config must not put {action} under permissions')

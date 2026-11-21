@@ -3,7 +3,8 @@
   "default_agent": "orchestrator",
   "model": "opencode-go/deepseek-v4.1-flash",
   "policies": [
-    { "action": "mcp.use", "resource": "*", "effect": "deny" }
+    { "action": "mcp.use", "resource": "*", "effect": "deny" },
+    { "action": "plugin.use", "resource": "*", "effect": "deny" }
   ],
   "instructions": ["/workspace/.opencode/AGENTS.md"],
   "experimental": { "subagent_depth": 1 },
