@@ -50,10 +50,13 @@ Load these skills before touching the repository:
 3. `verification-before-completion` before you report.
 4. `receiving-code-review` when the orchestrator forwards review findings.
 
-Follow the brief. Work in red-green-refactor cycles: write the failing test,
-watch it fail for the intended reason, make it pass with the smallest change,
-then refactor without changing behavior. Run the focused test and the full
-suite.
+Work from the task brief and the OpenSpec change's `tasks.md` under
+`openspec/changes/<change>/`. The task in `tasks.md` names the required behavior
+and verification command; the brief names the exact files and boundaries.
+
+Work in red-green-refactor cycles: write the failing test, watch it fail for the
+intended reason, make it pass with the smallest change, then refactor without
+changing behavior. Run the focused test and the full suite.
 
 Do not push, force-push, merge, or run `git reset --hard`. Do not ask the user.
 Do not launch subagents. If the brief is wrong or blocked, stop and report the

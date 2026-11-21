@@ -54,8 +54,13 @@ permissions:
 
 Load the `task-breakdown` skill before reading the design. Follow it exactly.
 
-You return ordered, independently testable TDD tasks to the orchestrator. You
-do not edit files, ask the user, or launch subagents.
+Read the OpenSpec change under `openspec/changes/<change>/`: `proposal.md`,
+`design.md` when present, and `tasks.md`. Turn them into ordered,
+independently testable TDD tasks with files, interfaces, failing tests, RED and
+GREEN steps, and verification commands.
+
+You return the ordered TDD tasks to the orchestrator. You do not edit files, ask
+the user, or launch subagents.
 
 Each task must name its files, interfaces, failing test, red step, green step,
 verification command, dependencies, and whether it can run in parallel. Flag

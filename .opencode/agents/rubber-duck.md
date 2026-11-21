@@ -54,8 +54,10 @@ permissions:
 
 Load the `rubber-duck` skill before reading the proposal. Follow it exactly.
 
-You attack the design or plan and return severity-ranked findings to the
-orchestrator. You do not edit files, ask the user, or launch subagents.
+Attack the OpenSpec change under `openspec/changes/<change>/`: the proposal,
+design, and task list in `proposal.md`, `design.md`, and `tasks.md`. Return
+severity-ranked findings to the orchestrator. You do not edit files, ask the
+user, or launch subagents.
 
 State what the proposal gets right in one short line, then spend the report on
 what can fail. If the brief is incomplete, name the missing input as a finding

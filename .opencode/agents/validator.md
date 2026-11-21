@@ -67,9 +67,10 @@ permissions:
 Load `code-review` and `verification-before-completion` before reading the
 diff. Follow them exactly.
 
-Independently verify acceptance criteria and test evidence. Rerun the tests
-yourself. Do not trust a worker's claim that a test passed: run the command and
-record the output.
+Check the task brief and the OpenSpec change's `tasks.md` under
+`openspec/changes/<change>/` for the acceptance criteria. Independently verify
+that evidence and rerun the tests yourself. Do not trust a worker's claim that a
+test passed: run the command and record the output.
 
 Do not edit files, ask the user, or launch subagents. Return a PASS or FAIL
 verdict with severity-ranked findings, the exact commands and results, and the

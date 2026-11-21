@@ -1320,7 +1320,7 @@ if orchestrator is not None:
     rules = permission_rules(orchestrator)
     check(has_rule(rules, 'edit', '*', 'deny'),
           'orchestrator must deny edit *')
-    for resource in ('**/docs/superpowers/**', '**/.superpowers/**'):
+    for resource in ('**/openspec/**', '**/.superpowers/**'):
         check(has_rule(rules, 'edit', resource, 'allow'),
               f'orchestrator must allow edit {resource}')
     check(has_rule(rules, 'subagent', '*', 'deny'),

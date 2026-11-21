@@ -16,29 +16,6 @@ It applies in `/workspace` and in every clone under `/workspace/repos`.
 - Do not push, merge, publish, or run a destructive operation without explicit
   user approval.
 
-## OpenCode V2 tool mapping
-
-Superpowers skills describe actions in older harness terms. Translate them to
-the tools this host provides:
-
-| Skill instruction | OpenCode V2 equivalent |
-| --- | --- |
-| Create or update todos | There is no todo tool. Keep the plan and task ledger in a Markdown file under the repository. |
-| `Subagent (general-purpose):` | `subagent` with `agent`, `description`, and `prompt`; pass `sessionID` to continue an existing child session. |
-| Invoke a skill | `skill` with the bare skill ID. |
-| Read a file | `read`. |
-| Create or overwrite a file | `write`. |
-| Make a targeted change | `edit`. |
-| Apply a patch | `patch`. |
-| Run a command | `shell` (`command`, `workdir`, `timeout`, `background`). |
-| Search files | `grep`, `glob`. |
-| Fetch a URL | `webfetch`. |
-| Search the web | `websearch`. |
-| MCP action | Call the exposed MCP tool by its full name, for example `search-parallel_web_search` or `search-brave_brave_web_search`. |
-
-Skill IDs are bare names. Drop the `superpowers:` prefix when a skill names
-another skill: `superpowers:brainstorming` means the `brainstorming` skill.
-
 ## Test-driven development
 
 Every code, configuration, script, and testable infrastructure change starts
@@ -59,11 +36,31 @@ orchestrator nor an implementer may approve its own exception. Documentation and
 prose use the writing skills and a verifiable review pass instead of TDD, but
 their links, commands, and claims must still be checked.
 
+## OpenSpec workflow
+
+Every repository keeps an `openspec/` root, created once with `openspec init`.
+Plan work as an OpenSpec change:
+
+- `openspec/changes/<change>/proposal.md` states what and why.
+- `openspec/changes/<change>/specs/<capability>/spec.md` holds the delta specs.
+- `openspec/changes/<change>/design.md` records the approach when the change is
+  architectural or cross-cutting.
+- `openspec/changes/<change>/tasks.md` lists ordered implementation tasks, each
+  with its failing test and verification command.
+- `openspec/specs/` holds the living specs, updated when a change is archived.
+
+Use `/openspec-propose` for the generated planning skill that creates the
+change artifacts. Do not run `openspec propose` as a shell command. The CLI
+commands are `openspec init`, `openspec new change`, `openspec status`,
+`openspec instructions`, `openspec validate`, and `openspec archive`.
+
+OpenSpec `verify` is advisory. It supports the workflow but never replaces the
+test suite, `validator`, or `security-reviewer`.
+
 ## Worker rules
 
 - Load your role skill first, before acting.
-- The plugin skips child sessions. Load your role skill and work the brief; do
-  not restart the controller workflow or load `using-superpowers`.
+- Work the brief. Do not restart the controller workflow in a child session.
 - Do not ask the user questions. Ask the orchestrator in your report if the
   brief is incomplete.
 - Do not launch subagents.
@@ -84,8 +81,8 @@ All MCP servers come from the host overlay mounted read-only at `/etc/opencode`.
 The project `opencode.jsonc` defines no MCP servers and loads no git-backed
 plugin. Host-only MCP is enforced by policy, not just convention: the global
 control-plane config's top-level `policies` deny `mcp.use *` and `plugin.use *`,
-allow only the local Superpowers plugin, and the host overlay's top-level
-`policies` allow `mcp.use search-*` and any non-search server it defines.
+and the host overlay's top-level `policies` allow `mcp.use search-*` and any
+non-search server it defines. No plugin is allowlisted.
 Do not add MCP entries to a repository to work around a missing host server;
 the policy blocks them.
 
@@ -109,8 +106,11 @@ deny in every non-research agent, including the host copy of that agent.
 - Canonical clone root: `/workspace/repos/<owner>/<repo>`.
 - Worktree root: `/workspace/repos/.worktrees/<owner>/<repo>/<name>`.
 - `/worktrees` is a compatibility path for existing scripts.
-- Process artifacts: `<repo>/.superpowers/sdd/` for the ledger, briefs, and
-  reports; `<repo>/docs/superpowers/` for plans and specifications.
+- Ledger path: `<repo>/.superpowers/sdd/` for briefs and reports. It is a
+  process directory, not a dependency.
+- OpenSpec change artifacts: `<repo>/openspec/changes/<change>/` for the
+  proposal, delta specs, design, and tasks.
+- Living specs: `<repo>/openspec/specs/`, updated when a change is archived.
 
 ## Copy-writer boundaries
 

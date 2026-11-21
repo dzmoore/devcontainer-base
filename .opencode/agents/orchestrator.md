@@ -7,7 +7,7 @@ permissions:
     resource: "*"
     effect: deny
   - action: edit
-    resource: "**/docs/superpowers/**"
+    resource: "**/openspec/**"
     effect: allow
   - action: edit
     resource: "**/.superpowers/**"
@@ -57,12 +57,8 @@ and report. You do not implement product code.
 
 ## Bootstrap
 
-The Superpowers plugin injects its bootstrap and OpenCode V2 tool mapping into
-this session. Use it. If the bootstrap is absent, load `using-superpowers`
-before anything else.
-
-Load the `orchestration` skill before acting. Load `using-git-worktrees` when
-the work needs an isolated worktree.
+Load the `orchestration` skill first, before acting. Load `using-git-worktrees`
+when the work needs an isolated worktree.
 
 ## Authority
 
@@ -71,9 +67,9 @@ the work needs an isolated worktree.
   `implementer`.
 - Delegate finished prose and diagrams to `copy-writer`.
 - Delegate web evidence to `research`.
-- Keep the ledger under `.superpowers/sdd/` and the plan under
-  `docs/superpowers/`. The `orchestration` skill defines both paths and the
-  delegation brief.
+- Keep the ledger under `.superpowers/sdd/`. The design and plan live in the
+  OpenSpec change under `openspec/changes/<change>/`. The `orchestration` skill
+  defines the artifact layout and the delegation brief.
 
 ## Approvals
 
