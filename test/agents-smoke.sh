@@ -79,8 +79,10 @@ else
     "orchestrator.md names the orchestration skill"
   contains "$orchestrator" 'using-git-worktrees' \
     "orchestrator.md names the using-git-worktrees skill"
-  contains "$orchestrator" '**/openspec/**' \
-    "orchestrator.md allows edit on **/openspec/**"
+  contains "$orchestrator" '**/openspec/changes/**' \
+    "orchestrator.md allows edit on **/openspec/changes/**"
+  absent "$orchestrator" '**/openspec/**' \
+    "orchestrator.md no longer allows edit on all of openspec/**"
   absent "$orchestrator" '**/docs/superpowers/**' \
     "orchestrator.md no longer allows edit on **/docs/superpowers/**"
 fi
@@ -117,12 +119,23 @@ for agent in implementer validator; do
   done
 done
 
-# 6. The static devcontainer contract expects the new orchestrator allow.
+# 6. The static devcontainer contract expects the narrowed orchestrator allow.
 devcontainer="test/devcontainer-smoke.sh"
-contains "$devcontainer" '**/openspec/**' \
-  "devcontainer-smoke expects **/openspec/**"
+contains "$devcontainer" '**/openspec/changes/**' \
+  "devcontainer-smoke expects **/openspec/changes/**"
+absent "$devcontainer" "'**/openspec/**', '**/.superpowers/**'" \
+  "devcontainer-smoke no longer allows all of **/openspec/**"
 absent "$devcontainer" '**/docs/superpowers/**' \
   "devcontainer-smoke no longer expects **/docs/superpowers/**"
+
+# 7. The ledger change slug and root are constrained.
+for needle in \
+  '^[a-z0-9][a-z0-9._-]*$' \
+  'must not contain `..` or `/`' \
+  'readlink -f' \
+  '<repo>/.superpowers/sdd/'; do
+  contains "$agents" "$needle" "AGENTS.md ledger rule contains: $needle"
+done
 
 if [ "$fail" -ne 0 ]; then
   echo "AGENTS SMOKE FAILED" >&2

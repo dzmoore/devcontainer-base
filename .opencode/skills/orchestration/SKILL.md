@@ -130,6 +130,10 @@ Markdown with no scripts.
 
 - Ledger and per-task artifacts:
   `<repo>/.superpowers/sdd/<YYYY-MM-DD>-<change-slug>/`
+  - The change slug must match `^[a-z0-9][a-z0-9._-]*$` and must not contain `..` or `/`.
+    Resolve the ledger root with `readlink -f` and require the
+    resolved path to stay under `<repo>/.superpowers/sdd/` before writing or
+    reading a brief or report.
   - `task-<N>-brief.md` — the brief handed to a worker
   - `task-<N>-report.md` — the worker's report
   - `fix-round-<N>.md` — review findings and the fix round, when needed

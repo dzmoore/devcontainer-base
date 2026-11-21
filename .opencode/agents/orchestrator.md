@@ -7,7 +7,7 @@ permissions:
     resource: "*"
     effect: deny
   - action: edit
-    resource: "**/openspec/**"
+    resource: "**/openspec/changes/**"
     effect: allow
   - action: edit
     resource: "**/.superpowers/**"

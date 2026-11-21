@@ -186,66 +186,120 @@ fi
 # stage, so install the pinned CLI here. Re-running post-create must not
 # reinstall an already-correct version.
 
-# Compare dotted version strings without relying on GNU sort -V.
+# Compare dotted version strings without relying on GNU sort -V. A pre-release
+# suffix sorts before its release, so 22.20.0-rc.1 is not >= 22.20.0. Splitting
+# on IFS keeps the body free of command substitution and redirections so the
+# smoke test can evaluate it safely.
 version_ge() {
-  local have="${1#v}" want="${2#v}"
-  local IFS='.'
-  local -a have_parts want_parts
-  read -r -a have_parts <<<"$have"
-  read -r -a want_parts <<<"$want"
-  local i h w
-  for i in 0 1 2; do
-    h="${have_parts[$i]:-0}"
-    w="${want_parts[$i]:-0}"
-    if ((10#$h > 10#$w)); then
-      return 0
+  local have="${1:-}" want="${2:-}"
+  have="${have#v}"
+  want="${want#v}"
+  local have_release="${have%%-*}"
+  local want_release="${want%%-*}"
+  local have_suffix=""
+  if [ "$have" != "$have_release" ]
+  then
+    have_suffix="${have#*-}"
+  fi
+  local old_ifs="$IFS"
+  IFS='.'
+  set -- $have_release
+  local h1="${1:-0}" h2="${2:-0}" h3="${3:-0}"
+  set -- $want_release
+  local w1="${1:-0}" w2="${2:-0}" w3="${3:-0}"
+  IFS="$old_ifs"
+  local part
+  for part in "$h1" "$h2" "$h3" "$w1" "$w2" "$w3"
+  do
+    if [ -z "$part" ]
+    then
+      return 1
     fi
-    if ((10#$h < 10#$w)); then
+    if [ -n "${part//[0-9]/}" ]
+    then
       return 1
     fi
   done
+  if [ "$h1" -gt "$w1" ]
+  then
+    return 0
+  fi
+  if [ "$h1" -lt "$w1" ]
+  then
+    return 1
+  fi
+  if [ "$h2" -gt "$w2" ]
+  then
+    return 0
+  fi
+  if [ "$h2" -lt "$w2" ]
+  then
+    return 1
+  fi
+  if [ "$h3" -gt "$w3" ]
+  then
+    return 0
+  fi
+  if [ "$h3" -lt "$w3" ]
+  then
+    return 1
+  fi
+  if [ -n "$have_suffix" ]
+  then
+    return 1
+  fi
   return 0
 }
 
-# OpenSpec 2.1.1 requires Node.js 22.20.0 or newer.
+# Pure predicates: the caller passes the observed version, so the file stays
+# free of command substitution and the smoke test can evaluate these bodies.
 require_node_version() {
-  local required="22.20.0" actual
-  if ! command -v node >/dev/null 2>&1; then
-    echo "Node.js is not installed; OpenSpec 2.1.1 requires Node.js $required or newer" >&2
+  local required="22.20.0" actual="${1:-}"
+  actual="${actual#v}"
+  if [ -z "$actual" ]
+  then
     return 1
   fi
-  actual="$(node --version 2>/dev/null || true)"
-  if ! version_ge "$actual" "$required"; then
-    echo "Node.js ${actual:-unknown} is too old; OpenSpec 2.1.1 requires Node.js $required or newer" >&2
-    return 1
-  fi
+  version_ge "$actual" "$required"
 }
 
 require_openspec_version() {
-  local required="2.1.1" output version
-  if ! command -v openspec >/dev/null 2>&1; then
-    echo "OpenSpec is not installed; expected $required" >&2
+  local required="2.1.1" actual="${1:-}"
+  if [ -z "$actual" ]
+  then
     return 1
   fi
-  output="$(openspec --version 2>&1 || true)"
-  version="$(printf '%s\n' "$output" |
-    grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
-  if [ "$version" != "$required" ]; then
-    echo "OpenSpec version mismatch: expected $required, got '$output'" >&2
-    return 1
+  if [ "$actual" != "${actual##* }" ]
+  then
+    actual="${actual##* }"
   fi
+  [ "$actual" = "$required" ]
 }
 
 echo "Configuring OpenSpec 2.1.1..."
-require_node_version || exit 1
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js is not installed; OpenSpec 2.1.1 requires Node.js 22.20.0 or newer" >&2
+  exit 1
+fi
+node_version="$(node --version 2>/dev/null || true)"
+if ! require_node_version "$node_version"; then
+  echo "Node.js ${node_version:-unknown} is too old; OpenSpec 2.1.1 requires Node.js 22.20.0 or newer" >&2
+  exit 1
+fi
 if ! command -v openspec >/dev/null 2>&1 ||
   [ "$(openspec --version 2>/dev/null |
        grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" != "2.1.1" ]; then
   echo "Installing OpenSpec 2.1.1..."
-  npm install -g @fission-ai/openspec@2.1.1
+  npm install -g --ignore-scripts --no-audit --no-fund @fission-ai/openspec@2.1.1
 fi
 echo "Verifying OpenSpec..."
-require_openspec_version || exit 1
+openspec_output="$(openspec --version 2>&1 || true)"
+openspec_version="$(printf '%s\n' "$openspec_output" |
+  grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+if ! require_openspec_version "$openspec_version"; then
+  echo "OpenSpec version mismatch: expected 2.1.1, got '$openspec_output'" >&2
+  exit 1
+fi
 openspec --version
 
 # OpenSpec enables anonymous telemetry by default. containerEnv sets

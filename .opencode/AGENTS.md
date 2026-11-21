@@ -108,7 +108,10 @@ deny in every non-research agent, including the host copy of that agent.
 - Worktree root: `/workspace/repos/.worktrees/<owner>/<repo>/<name>`.
 - `/worktrees` is a compatibility path for existing scripts.
 - Ledger path: `<repo>/.superpowers/sdd/` for briefs and reports. It is a
-  process directory, not a dependency.
+  process directory, not a dependency. The change slug under it must match
+  `^[a-z0-9][a-z0-9._-]*$` and must not contain `..` or `/`. Resolve the ledger
+  root with `readlink -f` and keep the resolved path under
+  `<repo>/.superpowers/sdd/`.
 - OpenSpec change artifacts: `<repo>/openspec/changes/<change>/` for the
   proposal, delta specs, design, and tasks.
 - Living specs: `<repo>/openspec/specs/`, updated when a change is archived.
