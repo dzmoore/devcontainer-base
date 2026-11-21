@@ -118,7 +118,7 @@ rm -rf /tmp/devcontainer-base
 
 If the project already has a `.devcontainer/` or `.opencode/`, merge the files instead of overwriting them. Then update the `"name"` in `devcontainer.json` if you like, and reopen the project in the container. The rest of the configuration is self-contained.
 
-The project also needs an OpenSpec root. Run `openspec init` once inside the container after the copy; it creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills under `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it. Existing checkouts need the steps in [`docs/migrations/2026-11-20-openspec.md`](docs/migrations/2026-11-20-openspec.md).
+The project also needs an OpenSpec root. Run `openspec init --tools opencode --scope project --profile core` once inside the container after the copy. The command creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills under `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it. Existing checkouts need the steps in [`docs/migrations/2026-11-20-openspec.md`](docs/migrations/2026-11-20-openspec.md).
 
 > [!TIP]
 > If you use [`degit`](https://github.com/Rich-Harris/degit), copy both configuration directories: `npx degit dzmoore/devcontainer-base/.devcontainer .devcontainer` and `npx degit dzmoore/devcontainer-base/.opencode .opencode`.
@@ -303,7 +303,7 @@ Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your 
 config, agents, and skills into `~/.config/opencode/`, so the workspace and every
 clone under `/workspace/repos` use the same agents and skills.
 
-`openspec/` is the spec layer. `post-create.sh` installs `@fission-ai/openspec@2.1.1`; OpenSpec requires Node.js 22.20 or newer. Each repository runs `openspec init` once. The command creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills in `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it.
+`openspec/` is the spec layer. `post-create.sh` installs `@fission-ai/openspec@2.1.1`; OpenSpec requires Node.js 22.20 or newer. Each repository runs `openspec init --tools opencode --scope project --profile core` once. The command creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills in `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it.
 
 Use `/openspec-propose` to create a change. The change holds `proposal.md` with the what and why, plus the delta specs under `openspec/changes/<change>/specs/<capability>/spec.md`. `design.md` records the approach when the change is architectural or cross-cutting, and `tasks.md` lists the ordered tasks. Each task names its failing test and verification command. Do not run `openspec propose` as a shell command.
 
@@ -348,7 +348,7 @@ The orchestrator delegates in this order:
    `openspec validate <change> --strict` runs as supporting evidence.
 7. Merge and push only with explicit user approval.
 
-`openspec archive` folds a completed change's delta specs into `openspec/specs/`. The CLI commands are `openspec init`, `openspec new change`, `openspec status`, `openspec instructions`, `openspec validate`, and `openspec archive`. OpenSpec verification (`openspec validate <change> --strict`) is advisory and never replaces `validator` or the test suite.
+`openspec archive` folds a completed change's delta specs into `openspec/specs/`. The CLI commands are `openspec init --tools opencode --scope project --profile core`, `openspec new change`, `openspec status`, `openspec instructions`, `openspec validate`, and `openspec archive`. OpenSpec verification (`openspec validate <change> --strict`) is advisory and never replaces `validator` or the test suite.
 
 `build` and `plan` are disabled in `.opencode/opencode.global.json` so
 `orchestrator` is the only primary. Re-enable either one by removing its

@@ -4,7 +4,7 @@ OpenSpec
   Source: https://github.com/Fission-AI/OpenSpec
   Version: 2.1.1
   License: MIT
-  Copyright (c) Fission AI
+  Copyright (c) 2025 FISSION AI INC
   Generated skills: .agents/skills/openspec-*/
 
 technical-writer

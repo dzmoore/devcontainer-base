@@ -42,6 +42,9 @@ pass "README.md exists"
 for needle in 'openspec init' 'OpenSpec 2.1.1' 'openspec archive' '22.20'; do
   contains "$readme" "$needle" "README.md contains $needle"
 done
+contains "$readme" \
+  'openspec init --tools opencode --scope project --profile core' \
+  "README.md contains the full openspec init command"
 
 # 2. The vendored Superpowers runtime is gone from the README.
 for needle in \
@@ -71,6 +74,8 @@ if [ ! -f "$notice" ]; then
 else
   pass "NOTICE exists"
   contains "$notice" 'OpenSpec' "NOTICE attributes OpenSpec"
+  contains "$notice" 'Copyright (c) 2025 FISSION AI INC' \
+    "NOTICE uses the upstream OpenSpec copyright line"
   absent "$notice" 'Superpowers' "NOTICE does not attribute Superpowers"
 fi
 
@@ -81,11 +86,20 @@ if [ ! -f "$migration" ]; then
 else
   pass "migration note exists"
   contains "$migration" 'openspec init' "migration note names openspec init"
+  contains "$migration" '2.1.1' "migration note names OpenSpec 2.1.1"
+  contains "$migration" '22.20' "migration note names Node.js 22.20"
   if grep -qiE 'rollback' "$migration" &&
      grep -qiE 'restore (the )?previous commit|revert' "$migration"; then
     pass "migration note documents rollback"
   else
     bad "migration note documents rollback"
+  fi
+  rollback_section="$(sed -n '/^## Rollback$/,$p' "$migration")"
+  if printf '%s\n' "$rollback_section" |
+     grep -qF -e '902f90c' -e 'before step 1'; then
+    pass "migration rollback names the pre-migration commit or before step 1"
+  else
+    bad "migration rollback names the pre-migration commit or before step 1"
   fi
 fi
 
