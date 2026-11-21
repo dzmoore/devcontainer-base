@@ -33,9 +33,9 @@
 
 ## 5. Documentation and attribution
 
-- [ ] 5.1 Update the README path table and workflow section to remove Superpowers, add OpenSpec, document `openspec init` per repository, and state the 2.1.1 pin.
-- [ ] 5.2 Update `NOTICE` to remove Superpowers attribution and add OpenSpec MIT attribution for the generated skills.
-- [ ] 5.3 Add a migration note for consumers covering the breaking change, the initialization step, and rollback.
+- [x] 5.1 Update the README path table and workflow section to remove Superpowers, add OpenSpec, document `openspec init` per repository, and state the 2.1.1 pin.
+- [x] 5.2 Update `NOTICE` to remove Superpowers attribution and add OpenSpec MIT attribution for the generated skills.
+- [x] 5.3 Add a migration note for consumers covering the breaking change, the initialization step, and rollback.
 
 ## 6. Integration verification
 
