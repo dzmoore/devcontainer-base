@@ -30,7 +30,7 @@ OpenSpec creates and archives proposal, specs, design, and tasks. The orchestrat
 
 ### Decision: Remove the plugin and all vendored runtime code
 
-The plugin, vendored tree, patch, lock, and updater are removed. OpenSpec is installed as a pinned CLI dependency, not committed as source. The generated `.agents/skills/openspec-*` Markdown is committed so the repository is reproducible and OpenCode can discover it without running `openspec update` first. The alternative, keeping the plugin and adding OpenSpec, was rejected because it doubles the planning surface and preserves the problem.
+The plugin, vendored tree, patch, lock, and updater are removed. OpenSpec is installed as a pinned CLI dependency by `.devcontainer/post-create.sh`, not committed as source. The generated `.agents/skills/openspec-*` Markdown is committed so the repository is reproducible and OpenCode can discover it without running `openspec update` first. The alternative, keeping the plugin and adding OpenSpec, was rejected because it doubles the planning surface and preserves the problem.
 
 ### Decision: Keep the existing agents and port only the missing skills
 
@@ -38,7 +38,7 @@ The nine agents remain. The native skill set is: the existing `orchestration` sk
 
 ### Decision: Pin OpenSpec 2.1.1 and initialize per repository
 
-The devcontainer image installs `@fission-ai/openspec@2.1.1` and requires Node 22.20 or newer. Each target repository runs `openspec init` once. The control plane detects a missing `openspec/` root and stops rather than creating it implicitly. The alternative, using `latest`, was rejected because OpenSpec shipped two breaking majors in eight days in November 2026.
+`.devcontainer/post-create.sh` installs `@fission-ai/openspec@2.1.1` and requires Node 22.20 or newer. Each target repository runs `openspec init` once. The control plane detects a missing `openspec/` root and stops rather than creating it implicitly. The alternative, using `latest`, was rejected because OpenSpec shipped two breaking majors in eight days in November 2026.
 
 ## Risks / Trade-offs
 
@@ -51,7 +51,7 @@ The devcontainer image installs `@fission-ai/openspec@2.1.1` and requires Node 2
 
 ## Migration Plan
 
-1. Pin and install OpenSpec 2.1.1 in the image.
+1. Pin and install OpenSpec 2.1.1 in `.devcontainer/post-create.sh`.
 2. Initialize OpenSpec in this repository and commit `openspec/` plus `.agents/skills/`.
 3. Remove the Superpowers plugin from the global config and delete the vendored tree, patch, lock, and updater.
 4. Add the native skills and rewire `AGENTS.md`, the orchestration skill, and the agent prompts.

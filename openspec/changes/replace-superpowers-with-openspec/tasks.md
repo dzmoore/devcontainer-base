@@ -1,8 +1,11 @@
 # Tasks
 
+> Execution order: 1, 3, 2, 4, 5, 6, 7. Group 3 must land before group 2 so the
+> native skills preserve the skill IDs the agent permissions require.
+
 ## 1. Pin and initialize OpenSpec
 
-- [ ] 1.1 Add `@fission-ai/openspec@2.1.1` and Node 22.20+ to the devcontainer image, then verify `openspec --version` prints `2.1.1` in a built container.
+- [ ] 1.1 Add `@fission-ai/openspec@2.1.1` and the Node 22.20+ requirement to `.devcontainer/post-create.sh`, then verify `openspec --version` prints `2.1.1` in a built container.
 - [ ] 1.2 Run `openspec init --tools opencode --scope project --profile core`, commit `openspec/` and `.agents/skills/`, and verify `openspec validate --strict` succeeds with no plugin file created.
 
 ## 2. Remove the Superpowers runtime

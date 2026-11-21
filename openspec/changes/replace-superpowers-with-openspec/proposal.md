@@ -27,5 +27,5 @@ None. This repository has no existing OpenSpec capabilities.
 ## Impact
 
 - `.opencode/opencode.global.json`, `.opencode/AGENTS.md`, `.opencode/agents/*`, `.opencode/skills/*`, `.opencode/superpowers*`, `scripts/update-superpowers.sh`, `test/devcontainer-smoke.sh`, `README.md`, and `NOTICE`.
-- The devcontainer image and post-create setup gain a pinned `@fission-ai/openspec@2.1.1` installation and Node 22.20+ requirement.
+- `.devcontainer/post-create.sh` gains a pinned `@fission-ai/openspec@2.1.1` installation and the Node 22.20+ requirement.
 - Every target repository that uses the workflow must run `openspec init` once. The control plane will detect a missing `openspec/` root and stop rather than create it implicitly.
