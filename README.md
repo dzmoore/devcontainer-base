@@ -222,6 +222,11 @@ If `/worktrees` is still an old volume mountpoint or a non-empty directory, `pos
 | `research/` | Local research artifacts (gitignored) |
 | `repos/` | Local multi-repo clones (gitignored, created by host-init) |
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
+| `test/agents-smoke.sh` | Control-plane instructions and agent prompts |
+| `test/skills-smoke.sh` | Native process skills and orchestration |
+| `test/openspec-smoke.sh` | OpenSpec tree, generated skills, and version guards |
+| `test/openspec-workflow-smoke.sh` | Disposable-repo init, propose, validate, and archive flow |
+| `test/docs-smoke.sh` | README, NOTICE, and migration-note contract |
 | `test/paste-smoke.py` | PTY paste regression test |
 
 `devcontainer.json` runs `post-create.sh` as the `postCreateCommand` and waits for it to finish before returning control.
@@ -712,14 +717,14 @@ The runtime smoke suite also clones a hermetic local bare remote with `repo clon
 
 Timezone coverage is layered: `static` checks the Dockerfile default, `tzdata`, and the post-create block; `pre` proves the image is correct with `--skip-post-create`; `up`, `smoke`, and `idempotent` prove the reconciled runtime state. The offset assertions use fixed UTC instants in July and January, so they exercise daylight saving rules without depending on the current date.
 
-The tests use Python 3 on the host for JSON parsing and the PTY paste test, and Python 3 plus OpenSSL for the GitHub App token tests. They target Linux, macOS, or WSL. Set `SMOKE_ROOT` to move the disposable copy, `REPO` to test another checkout, or `CID` to target an existing container.
+The tests use Python 3 on the host for JSON parsing and the PTY paste test, and Python 3 plus OpenSSL for the GitHub App token tests. They target Linux, macOS, or WSL. The focused smoke scripts need `openspec` 2.1.1 and `git` on PATH; the container modes still need Docker and the Dev Containers CLI. Set `SMOKE_ROOT` to move the disposable copy, `REPO` to test another checkout, or `CID` to target an existing container.
 
 ### Test modes
 
 | Mode | What it does |
 | --- | --- |
 | `guard` | Verifies destructive-operation guards reject unsafe paths and volume prefixes |
-| `static` | Validates JSON, feature lock, environment, mounts, Dockerfile, and shell syntax |
+| `static` | Validates JSON, feature lock, environment, mounts, Dockerfile, and shell syntax, then runs the focused smoke scripts `test/agents-smoke.sh`, `test/skills-smoke.sh`, `test/openspec-smoke.sh`, `test/openspec-workflow-smoke.sh`, and `test/docs-smoke.sh`; requires `openspec` 2.1.1 and `git` on PATH |
 | `app-token` | Runs the host-side GitHub App token tests; no container or real GitHub API needed |
 | `build` | Runs `static`, then builds the image and Dev Container Features |
 | `pre` | Starts the container with `--skip-post-create` and checks base tooling |
