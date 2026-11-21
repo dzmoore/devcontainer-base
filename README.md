@@ -363,6 +363,16 @@ does not run in `post-create.sh` or the smoke suite. After an OpenSpec pin
 change, run `openspec update` to refresh the generated skills in
 `.agents/skills/`.
 
+### OpenSpec telemetry
+
+OpenSpec telemetry is disabled in this devcontainer. `.devcontainer/devcontainer.json` sets `OPENSPEC_TELEMETRY=0` and `DO_NOT_TRACK=1` in `containerEnv`. `.devcontainer/post-create.sh` runs `openspec config set telemetry.enabled false` after installing the pinned CLI, so the opt-out holds even in shells without the environment variables. `post-create.sh` stops with `OpenSpec telemetry is still enabled` when the CLI keeps the setting on.
+
+Outside this container, set either environment variable, or run:
+
+```bash
+openspec config set telemetry.enabled false
+```
+
 ### Change an agent model
 
 Every agent file in `.opencode/agents/` has its own `model:` line. All nine
