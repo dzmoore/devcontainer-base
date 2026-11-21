@@ -350,7 +350,7 @@ if global_path.is_file():
     g = json.loads(global_path.read_text())
     check(g.get('default_agent') == 'orchestrator', 'default_agent must be orchestrator')
     check(g.get('model') == 'opencode-go/deepseek-v4.1-flash', 'default model mismatch')
-    check(g.get('plugins') == ['/workspace/.opencode/superpowers'], 'local plugin path missing')
+    check('plugins' not in g, 'global config must not load a plugin')
     check(g.get('experimental', {}).get('subagent_depth') == 1, 'subagent_depth must be 1')
     check(g.get('worktree', {}).get('directory') == '/workspace/repos/.worktrees', 'worktree directory mismatch')
     check(g.get('agents', {}).get('build', {}).get('disabled') is True, 'build must be disabled')
@@ -366,109 +366,50 @@ if global_path.is_file():
             for rule in global_policies)
     check(has_global_policy('mcp.use', '*', 'deny'),
           'global config must deny mcp.use * in policies')
-    check(has_global_policy('plugin.use', '*', 'deny'),
-          'global config must deny plugin.use * in policies')
-    check(has_global_policy('plugin.use', '/workspace/.opencode/superpowers', 'allow'),
-          'global config must allow the local Superpowers plugin in policies')
+    check(not any(rule.get('action') == 'plugin.use' for rule in global_policies),
+          'global config must not carry a plugin.use policy')
     for action in ('mcp.use', 'plugin.use'):
         check(not any(rule.get('action') == action for rule in global_perms),
               f'global config must not put {action} under permissions')
-    if global_policies:
-        deny = {'action': 'plugin.use', 'resource': '*', 'effect': 'deny'}
-        allow = {'action': 'plugin.use', 'resource': '/workspace/.opencode/superpowers',
-                 'effect': 'allow'}
-        deny_index = global_policies.index(deny) if deny in global_policies else -1
-        allow_index = global_policies.index(allow) if allow in global_policies else -1
-        check(deny_index != -1 and allow_index > deny_index,
-              'global plugin allow must follow the plugin deny in policies')
 
 project = json.loads(opencode_path.read_text()) if opencode_path.is_file() else {}
 check('plugins' not in project, 'opencode.jsonc must not load a plugin')
 check('mcp' not in project, 'opencode.jsonc must not define MCP servers; use the host overlay')
 
 for rel in (
-    '.opencode/superpowers/index.js',
-    '.opencode/superpowers/.opencode/plugins/superpowers.js',
-    '.opencode/superpowers/skills/using-superpowers/SKILL.md',
-    '.opencode/superpowers/LICENSE',
-    '.opencode/superpowers/package.json',
-    '.opencode/superpowers/UPSTREAM.md',
+    '.opencode/superpowers',
     '.opencode/superpowers.lock',
     '.opencode/superpowers-local.patch',
     'scripts/update-superpowers.sh',
-    '.opencode/AGENTS.md',
 ):
-    check((repo / rel).is_file(), f'{rel} missing')
+    check(not (repo / rel).exists(), f'{rel} must be removed')
+check((repo / '.opencode' / 'AGENTS.md').is_file(), '.opencode/AGENTS.md missing')
 
-lock_path = repo / '.opencode/superpowers.lock'
-if lock_path.is_file():
-    lock = lock_path.read_text()
-    check('ref=v7.0.2' in lock, 'superpowers.lock must pin v7.0.2')
-    check('commit=c62ffea8267a70de07583e153544d355b6748a56' in lock, 'superpowers.lock commit mismatch')
+check((repo / 'openspec' / 'config.yaml').is_file(), 'openspec/config.yaml missing')
+check((repo / '.agents' / 'skills' / 'openspec-propose' / 'SKILL.md').is_file(),
+      '.agents/skills/openspec-propose/SKILL.md missing')
 
-tdd_skill = repo / '.opencode' / 'superpowers' / 'skills' / 'test-driven-development' / 'SKILL.md'
-check(tdd_skill.is_file(), 'vendored TDD skill missing')
-if tdd_skill.is_file():
-    tdd_text = tdd_skill.read_text()
-    for url in (
-        'https://newsletter.kentbeck.com/p/canon-tdd',
-        'https://martinfowler.com/bliki/TestDrivenDevelopment.html',
-        'https://www.jamesshore.com/v2/blog/2005/red-green-refactor',
-    ):
-        check(url in tdd_text,
-              f'vendored TDD skill missing canonical reference {url}')
-
-sdd_refs = repo / '.opencode' / 'superpowers' / 'skills' / 'subagent-driven-development' / 'references'
-reviewer_prompt = (repo / '.opencode' / 'superpowers' / 'skills' /
-                   'requesting-code-review' / 'code-reviewer.md')
-vendored_prompts = (
-    ('subagent-driven-development/references/fix-loop.md',
-     sdd_refs / 'fix-loop.md'),
-    ('subagent-driven-development/references/handling-reports.md',
-     sdd_refs / 'handling-reports.md'),
-    ('subagent-driven-development/references/final-review.md',
-     sdd_refs / 'final-review.md'),
-    ('requesting-code-review/code-reviewer.md', reviewer_prompt),
+native_skills = (
+    'test-driven-development',
+    'systematic-debugging',
+    'verification-before-completion',
+    'receiving-code-review',
+    'using-git-worktrees',
+    'finishing-a-development-branch',
 )
-for rel, path in vendored_prompts:
-    check(path.is_file(), f'{rel} missing')
-    if path.is_file():
-        text = path.read_text()
-        for phrase in ('more capable model', 'most capable available model',
-                       'Subagent (general-purpose):'):
-            check(phrase not in text,
-                  f'{rel} must not contain {phrase!r}')
-if reviewer_prompt.is_file():
-    check('agent: validator' in reviewer_prompt.read_text(),
-          'code-reviewer.md must name agent: validator')
+for skill in native_skills:
+    check((repo / '.opencode' / 'skills' / skill / 'SKILL.md').is_file(),
+          f'native skill {skill} missing')
 
-plugin_path = repo / '.opencode' / 'superpowers' / '.opencode' / 'plugins' / 'superpowers.js'
-check(plugin_path.is_file(), 'vendored Superpowers plugin missing')
-if plugin_path.is_file():
-    plugin_text = plugin_path.read_text()
-    check('agent: "general"' not in plugin_text,
-          'Superpowers mapping must not dispatch agent: "general"')
-    check('subagent_type: "general"' not in plugin_text,
-          'Superpowers V1 mapping must not dispatch subagent_type: "general"')
-    check('named control-plane agent' in plugin_text,
-          'Superpowers mapping must name the control-plane agent')
-for rel, agent in (('requesting-code-review/SKILL.md', 'validator'),
-                   ('dispatching-parallel-agents/SKILL.md', 'implementer'),
-                   ('brainstorming/builder-check-prompt.md', 'design')):
-    path = repo / '.opencode' / 'superpowers' / 'skills' / rel
-    check(path.is_file(), f'vendored {rel} missing')
-    if path.is_file():
-        text = path.read_text()
-        check(f'`{agent}`' in text or f'agent: {agent}' in text or f'{agent}:' in text,
-              f'{rel} must name the control-plane agent {agent}')
-        check('general-purpose' not in text,
-              f'{rel} must not name a general-purpose subagent')
-builder_path = repo / '.opencode' / 'superpowers' / 'skills' / 'brainstorming' / 'builder-check-prompt.md'
-if builder_path.is_file():
-    check('rubber-duck' in builder_path.read_text(),
-          'builder-check-prompt.md must name rubber-duck')
+openspec_flow_skill = repo / '.opencode' / 'skills' / 'orchestration' / 'SKILL.md'
+check(openspec_flow_skill.is_file(), 'orchestration skill missing')
+if openspec_flow_skill.is_file():
+    openspec_flow_text = openspec_flow_skill.read_text()
+    for marker in ('openspec/changes/', 'openspec/specs/', 'openspec validate',
+                   'advisory'):
+        check(marker in openspec_flow_text,
+              f'orchestration skill missing OpenSpec flow marker {marker!r}')
 
-check('Superpowers' in (repo / 'NOTICE').read_text(), 'NOTICE must attribute Superpowers')
 agents_text = (repo / '.opencode' / 'AGENTS.md').read_text()
 check('enforced by policy' in agents_text,
       'AGENTS.md must say host-only MCP is enforced by policy')
@@ -484,8 +425,6 @@ check('search-*' in agents_text and 'prefix' in agents_text,
       'AGENTS.md must document the search-* server-name prefix')
 check('non-search host MCP server' in agents_text and 'non-research agent' in agents_text,
       'AGENTS.md must require explicit denies for non-search MCP servers')
-check('The plugin skips child sessions' in agents_text,
-      'AGENTS.md must explain the worker bootstrap without a false plugin rationale')
 security_skill = repo / '.opencode' / 'skills' / 'security-review' / 'SKILL.md'
 check(security_skill.is_file(), 'security-review skill missing')
 if security_skill.is_file():
@@ -775,10 +714,8 @@ if readme_path.is_file():
             check(marker in tdd_section,
                   f'README.md TDD section missing {marker!r}')
 
-    for command in ('scripts/update-superpowers.sh --check',
-                    'scripts/update-writing-skills.sh --check'):
-        check(command in readme_text,
-              f'README.md missing update command {command!r}')
+    check('scripts/update-writing-skills.sh --check' in readme_text,
+          "README.md missing update command 'scripts/update-writing-skills.sh --check'")
 
     code_review_skill = repo / '.opencode' / 'skills' / 'code-review' / 'SKILL.md'
     check(code_review_skill.is_file(), 'code-review skill missing')
@@ -1521,8 +1458,6 @@ PY
   echo 'PASS: repo helper syntax'
   bash -n "$REPO/scripts/render-excalidraw.sh"
   echo 'PASS: Excalidraw renderer syntax'
-  bash -n "$REPO/scripts/update-superpowers.sh"
-  echo 'PASS: Superpowers update script syntax'
   say "T1d OpenSpec smoke"
   bash "$SCRIPT_DIR/openspec-smoke.sh"
 }
