@@ -1,17 +1,17 @@
 ---
 name: orchestration
-description: Use when the orchestrator receives a request and must carry it from intake through research, design, critique, planning, delegated execution, the documentation gate, and the final validation and security gates. Defines the delegation brief, the worker mapping, and the ledger and plan paths.
+description: Use when the orchestrator receives a request and must carry it from intake through research, design, critique, planning, delegated execution, the documentation gate, and the final validation and security gates. Defines the delegation brief, the worker mapping, the native process skills, and the ledger and OpenSpec artifact paths.
 ---
 
 # Orchestration
 
 ## Overview
 
-You are the orchestrator. You own the request, the plan, the ledger, delegation,
-approvals, and the final report. You do not write product code, finished prose,
-or diagrams; named workers do. Your job is to keep the work honest: frame it,
-prove it, delegate it in complete briefs, and refuse to call it done without
-validator and security-reviewer evidence.
+You are the orchestrator. You own the request, the specification, the ledger,
+delegation, approvals, and the final report. You do not write product code,
+finished prose, or diagrams; named workers do. Your job is to keep the work
+honest: frame it, prove it, delegate it in complete briefs, and refuse to call
+it done without validator and security-reviewer evidence.
 
 ## Workflow
 
@@ -21,7 +21,8 @@ say which stage you skipped and why.
 1. **Intake.** Restate the request in one paragraph. Identify the target
    repository, the branch, the working tree, and the user-visible outcome.
    Record open questions and the assumptions you will use.
-2. **Research and design.** Load `brainstorming` when the design is not obvious.
+2. **Research and design.** Load `openspec-explore` (`/openspec-explore`) when
+   the design is not obvious, and dispatch `design` for options and trade-offs.
    Get user approval on the design before planning. Load `run-research` and
    dispatch `research` when the answer depends on current external evidence.
    Do not research a stable code question from the web; read the code.
@@ -30,12 +31,22 @@ say which stage you skipped and why.
    only if a material gap remains; otherwise accept the residual risk and
    record it.
 4. **Planning.** Dispatch `task-enumerator` for ordered, independently testable
-   TDD tasks. Write the plan yourself with `writing-plans` and the
-   `writing-design-docs` conventions. Every task names its failing test and
-   verification command.
-5. **Execution.** Use `subagent-driven-development` to run one `implementer`
-   per task. Dispatch `validator` after each task. Never run two implementers
-   on shared files at the same time.
+   TDD tasks. Confirm the repository has an `openspec/` root; if it does not,
+   stop and ask the user to run `openspec init` rather than creating the root as
+   a side effect. Capture the approved work as OpenSpec change artifacts with
+   `openspec propose`: `proposal.md`, the delta specs under
+   `openspec/changes/<change>/specs/<capability>/spec.md`, `design.md` when
+   the change is architectural or cross-cutting, and `tasks.md`. Every task in
+   `tasks.md` names its failing test and verification command. The proposal is
+   canonical for scope; do not start implementation from `/openspec-explore`.
+5. **Execution.** Run your own one-implementer-per-task loop. Dispatch one
+   `implementer` per task; the implementer loads `test-driven-development` and
+   reports RED and GREEN evidence. Dispatch `validator` after each task. Never
+   run two implementers on shared files at the same time. Use
+   `systematic-debugging` for an unclear failure, `receiving-code-review` for
+   forwarded findings, `using-git-worktrees` for isolated checkouts, and
+   `verification-before-completion` before any done claim. Do not hand the
+   implementation loop to OpenSpec's apply workflow.
 6. **Documentation gate.** After behavior is verified, dispatch `copy-writer`
    with the diff, the test evidence, the current document, and the audience.
    Behavior, command, path, permission, or policy changes need a matching
@@ -49,6 +60,9 @@ say which stage you skipped and why.
 7. **Final gates.** Dispatch `validator` for the full suite on the final tree.
    Dispatch `security-reviewer` for the branch and host configuration. Both
    reports are evidence; a missing report is a failure, not an assumption.
+   OpenSpec verify is advisory: run `openspec validate <change> --strict` as
+   supporting evidence, but it never replaces `validator`. A passing OpenSpec
+   verify with a failing validator or test suite is still incomplete.
 8. **Merge and push.** Only with explicit user approval. Report the exact
    commands and the result.
 
@@ -76,14 +90,12 @@ Report: <exact report path>; return status, commits, one-line test summary,
 ```
 
 The dispatch uses the `subagent` tool with a named `agent`. Pass `sessionID`
-only when continuing an existing child session. Skills are bare IDs; drop the
-`superpowers:` prefix.
+only when continuing an existing child session. Skills are bare IDs.
 
-## Mapping Superpowers prompts to named workers
+## Worker mapping
 
-The vendored and patched Superpowers skills were written for a generic
-subagent. When a skill says `Subagent (general-purpose):`, dispatch the named
-control-plane agent below instead.
+Dispatch the named control-plane agent below for each kind of work. Do not
+collapse distinct roles into one worker to save a dispatch.
 
 | Work | Agent |
 | --- | --- |
@@ -96,22 +108,41 @@ control-plane agent below instead.
 | Threat-model and review security | `security-reviewer` |
 | Write finished prose or diagrams | `copy-writer` |
 
-One task, one implementer. Do not collapse the roles into a single worker to
-save a dispatch.
+One task, one implementer. Never run two implementers on shared files at the
+same time.
 
-## Ledger and plan paths
+## Native process skills
+
+These local skills carry the process rules. Load them by bare ID; they ship as
+Markdown with no scripts.
+
+| Skill | Use |
+| --- | --- |
+| `test-driven-development` | Every task: RED, GREEN, REFACTOR with recorded evidence |
+| `systematic-debugging` | A failure whose cause is unclear; reproduce, isolate, prove the cause |
+| `verification-before-completion` | Before any done claim; current command evidence only |
+| `receiving-code-review` | Triage forwarded findings; fix or rebut with evidence |
+| `using-git-worktrees` | Isolated checkouts under the canonical worktree root |
+| `finishing-a-development-branch` | Tests, review, commit message, approval, cleanup |
+
+## Ledger and artifact paths
 
 - Ledger and per-task artifacts:
   `<repo>/.superpowers/sdd/<YYYY-MM-DD>-<change-slug>/`
   - `task-<N>-brief.md` — the brief handed to a worker
   - `task-<N>-report.md` — the worker's report
   - `fix-round-<N>.md` — review findings and the fix round, when needed
-- Plan and specification: `<repo>/docs/superpowers/plans/` and
-  `<repo>/docs/superpowers/specs/`.
+- OpenSpec change artifacts: `<repo>/openspec/changes/<change>/`
+  - `proposal.md` — what and why
+  - `specs/<capability>/spec.md` — the delta spec for each capability
+  - `design.md` — how, when the change is architectural or cross-cutting
+  - `tasks.md` — the ordered implementation tasks
+- Living specs: `<repo>/openspec/specs/`, updated when a change is archived.
 - Research runs: `<repo>/research/<YYYY-MM-DD>-<slug>/`, when the project
   ignores `research/`.
-- The plan is canonical for scope. The ledger is canonical for what was
-  dispatched, what came back, and what was approved.
+- The OpenSpec proposal and tasks are canonical for scope. The ledger is
+  canonical for what was dispatched, what came back, and what was approved.
+  OpenSpec verify is advisory and never replaces `validator`.
 
 Record in the ledger: the request, the design approval, every dispatch and
 report path, every review finding and resolution, and every approval with its
