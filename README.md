@@ -40,7 +40,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Containers** | Docker-in-Docker, Docker Compose, Buildx |
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), Glow (`glow`) with `less` pager, curl, OpenSSH client, unzip, zip, yq |
-| **AI & workflow** | OpenCode 2.3.0, Neovim 0.12.6, Starship 1.27.0 |
+| **AI & workflow** | OpenCode 2.3.0, OpenSpec 2.1.1, Neovim 0.12.6, Starship 1.27.0 |
 | **Rendering** | Firefox ESR (headless) for the official Excalidraw CLI and PNG diagram rendering |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
 | **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, and Kubernetes config; repo clones live in the workspace |
@@ -117,6 +117,8 @@ rm -rf /tmp/devcontainer-base
 ```
 
 If the project already has a `.devcontainer/` or `.opencode/`, merge the files instead of overwriting them. Then update the `"name"` in `devcontainer.json` if you like, and reopen the project in the container. The rest of the configuration is self-contained.
+
+The project also needs an OpenSpec root. Run `openspec init` once inside the container after the copy; it creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills under `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it. Existing checkouts need the steps in [`docs/migrations/2026-11-20-openspec.md`](docs/migrations/2026-11-20-openspec.md).
 
 > [!TIP]
 > If you use [`degit`](https://github.com/Rich-Harris/degit), copy both configuration directories: `npx degit dzmoore/devcontainer-base/.devcontainer .devcontainer` and `npx degit dzmoore/devcontainer-base/.opencode .opencode`.
@@ -200,24 +202,22 @@ If `/worktrees` is still an old volume mountpoint or a non-empty directory, `pos
 | `.devcontainer/bin/repo` | Multi-repo helper: clone, fork, list, switch, pr, and worktree |
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
-| `opencode.jsonc` | OpenCode project config; minimal and defines no MCP servers |
-| `.opencode/opencode.global.json` | Global control-plane config: default `orchestrator`, local Superpowers plugin, `AGENTS.md` instruction, worktree directory, and disabled `build` and `plan` |
-| `.opencode/AGENTS.md` | Control-plane instructions: OpenCode V2 tool mapping, TDD policy, worker rules, host overlay, and repository paths |
+| `opencode.jsonc` | OpenCode project config; minimal, defines no MCP servers, and loads no plugin |
+| `.opencode/opencode.global.json` | Global control-plane config: default `orchestrator`, `AGENTS.md` instruction, worktree directory, and disabled `build` and `plan`; loads no plugin and denies `mcp.use *` and `plugin.use *` |
+| `.opencode/AGENTS.md` | Control-plane instructions: TDD policy, OpenSpec workflow, worker rules, host overlay, and repository paths |
 | `.opencode/agents/` | Nine agent definitions: one primary `orchestrator` and eight subagents |
 | `.opencode/agents/research.md` | Research subagent definition and write/network permissions |
 | `.opencode/agents/copy-writer.md` | Copy writer subagent definition, skill routing, and prose and diagram permissions |
-| `.opencode/skills/` | Role skills, `run-research`, and the vendored writing skills |
+| `.opencode/skills/` | Role skills, `run-research`, the native process skills, and the vendored writing skills |
 | `.opencode/skills/run-research/` | Research orchestration skill and report template |
-| `.opencode/superpowers/` | Vendored Superpowers v7.0.2 plugin, skills, license, and `UPSTREAM.md` |
-| `.opencode/superpowers.lock` | Pinned Superpowers repository, ref, commit, tree hash, and patch hash |
-| `.opencode/superpowers-local.patch` | Local TDD and subagent template edits applied to the vendored tree |
 | `.opencode/skills/technical-writer/` | 10 vendored technical-writer skills, MIT license, and upstream pin |
 | `.opencode/skills/elements-of-style/` | Vendored Elements of Style reference and local wrapper |
 | `.opencode/skills/diagramming-processes/` | Local Excalidraw-only diagramming skill, references, and templates |
 | `.opencode/skills/writing-commits-and-pull-requests/` | Local skill for commit messages, pull request text, and review comments |
-| `NOTICE` | Third-party writing and Superpowers attribution |
+| `openspec/` | OpenSpec config, change proposals under `openspec/changes/`, and living specs under `openspec/specs/` |
+| `.agents/skills/` | Six generated `openspec-*` skills: propose, explore, apply-change, update-change, sync-specs, and archive-change |
+| `NOTICE` | Third-party writing skills and OpenSpec attribution |
 | `scripts/render-excalidraw.sh` | Render `.excalidraw` sources to PNG beside them |
-| `scripts/update-superpowers.sh` | Refresh or verify the vendored Superpowers tree |
 | `scripts/update-writing-skills.sh` | Refresh or verify the vendored writing skills |
 | `research/` | Local research artifacts (gitignored) |
 | `repos/` | Local multi-repo clones (gitignored, created by host-init) |
@@ -289,7 +289,7 @@ In VS Code, `${localEnv:...}` is resolved from the environment of the process th
 The config keeps the writable Kubernetes config inside the container and leaves OpenCode's project settings in the workspace:
 
 - `KUBECONFIG=/home/developer/.kube/config` — the container-local file lives in the `kubeconfig` volume and is where kind and kubectl write new contexts. It is intentionally the only default path: client-go locks every file in `KUBECONFIG`, and a workspace path on macOS VirtioFS can break `kind`. To use a project kubeconfig at `.kube/config`, merge or copy it manually; see [kind fails with `config.lock: permission denied`](#kind-fails-with-configlock-permission-denied).
-- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository keeps it minimal: it defines no MCP servers. The Superpowers plugin is loaded by `.opencode/opencode.global.json`; add project-specific OpenCode settings to `opencode.jsonc`.
+- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository keeps it minimal: it defines no MCP servers and loads no plugin. Add project-specific OpenCode settings to `opencode.jsonc`.
 - `STARSHIP_CONFIG=/workspace/.devcontainer/starship.toml` — the prompt config shipped with this base.
 
 Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your project uses different paths. The configuration also assumes the workspace is mounted at `/workspace`; if you change `workspaceFolder`, update the `/workspace` paths in `containerEnv`, `remoteEnv`, and the `.bashrc` hook in `post-create.sh`.
@@ -302,6 +302,10 @@ Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your 
 `.opencode/` is the canonical control plane. `post-create.sh` symlinks its global
 config, agents, and skills into `~/.config/opencode/`, so the workspace and every
 clone under `/workspace/repos` use the same agents and skills.
+
+`openspec/` is the spec layer. `post-create.sh` installs `@fission-ai/openspec@2.1.1`; OpenSpec requires Node.js 22.20 or newer. Each repository runs `openspec init` once. The command creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills in `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it.
+
+Use `/openspec-propose` to create a change. The change holds `proposal.md` with the what and why, plus the delta specs under `openspec/changes/<change>/specs/<capability>/spec.md`. `design.md` records the approach when the change is architectural or cross-cutting, and `tasks.md` lists the ordered tasks. Each task names its failing test and verification command. Do not run `openspec propose` as a shell command.
 
 `orchestrator` is the only primary agent and the default. It owns the request,
 plan, task ledger, delegation, approvals, and final report. The other eight
@@ -329,17 +333,22 @@ The orchestrator delegates in this order:
 1. Intake: restate the request and identify the target repository.
 2. Research and design: dispatch `research` when current external evidence is
    needed, `design` for options, and `rubber-duck` to attack the chosen proposal.
-3. Planning: dispatch `task-enumerator` for ordered tasks, then write the plan.
+3. Planning: dispatch `task-enumerator` for ordered tasks, then capture the
+   approved work with `/openspec-propose`.
 4. Execution: dispatch one `implementer` per task and `validator` after each
-   task. Do not run implementers in parallel on shared files.
+   task. The implementer reports RED and GREEN evidence. Do not run implementers
+   in parallel on shared files.
 5. Documentation gate: after behavior is verified, `copy-writer` updates the
    affected documents. Any change in behavior, command, path, permission, or
    policy needs a matching document change. `copy-writer` cannot edit
    `.opencode/**`, code, or tests; an implementer writes those and `copy-writer`
    reviews the prose.
-6. Final gates: `validator` runs the full suite on the final tree, and
-   `security-reviewer` reviews the branch and host configuration.
+6. Final gates: `validator` runs the full suite on the final tree,
+   `security-reviewer` reviews the branch and host configuration, and
+   `openspec validate <change> --strict` runs as supporting evidence.
 7. Merge and push only with explicit user approval.
+
+`openspec archive` folds a completed change's delta specs into `openspec/specs/`. The CLI commands are `openspec init`, `openspec new change`, `openspec status`, `openspec instructions`, `openspec validate`, and `openspec archive`. OpenSpec verification (`openspec validate <change> --strict`) is advisory and never replaces `validator` or the test suite.
 
 `build` and `plan` are disabled in `.opencode/opencode.global.json` so
 `orchestrator` is the only primary. Re-enable either one by removing its
@@ -347,12 +356,12 @@ The orchestrator delegates in this order:
 sessions keep the agent they stored and need a new session to pick up the
 change.
 
-Two maintainer-only scripts verify the vendored trees.
-`scripts/update-superpowers.sh --check` compares `.opencode/superpowers/` and
-`.opencode/superpowers-local.patch` with the pin in `.opencode/superpowers.lock`.
+One maintainer-only script verifies the vendored writing trees.
 `scripts/update-writing-skills.sh --check` compares the technical-writer and
-Elements of Style trees with their pinned commits. Both need network access and
-do not run in `post-create.sh` or the smoke suite.
+Elements of Style trees with their pinned commits. It needs network access and
+does not run in `post-create.sh` or the smoke suite. After an OpenSpec pin
+change, run `openspec update` to refresh the generated skills in
+`.agents/skills/`.
 
 ### Change an agent model
 
@@ -395,8 +404,8 @@ All MCP servers come from a host-owned overlay mounted read-only at
 `/etc/opencode`. The project `opencode.jsonc` defines no MCP servers.
 Host-only MCP is enforced by policy, not just convention: the global
 control-plane config's top-level `policies` deny `mcp.use *` and `plugin.use *`,
-allow only the local Superpowers plugin, and the host overlay's top-level
-`policies` allow its own named servers.
+the host overlay's top-level `policies` allow `mcp.use search-*` and any
+non-search server it defines, and no plugin is allowlisted.
 A clone can still add `opencode.json` or `.opencode/` agents and skills.
 Project MCP servers and plugins are blocked by that policy, but clone agent
 and skill definitions are trusted input: a cloned repository can shadow the

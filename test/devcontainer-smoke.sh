@@ -1463,6 +1463,8 @@ PY
   echo 'PASS: Excalidraw renderer syntax'
   say "T1d OpenSpec smoke"
   bash "$SCRIPT_DIR/openspec-smoke.sh"
+  say "T1e Docs smoke"
+  bash "$SCRIPT_DIR/docs-smoke.sh"
 }
 
 run_app_token() {
