@@ -1523,6 +1523,8 @@ PY
   echo 'PASS: Excalidraw renderer syntax'
   bash -n "$REPO/scripts/update-superpowers.sh"
   echo 'PASS: Superpowers update script syntax'
+  say "T1d OpenSpec smoke"
+  bash "$SCRIPT_DIR/openspec-smoke.sh"
 }
 
 run_app_token() {

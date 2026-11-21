@@ -181,6 +181,20 @@ if [ -x "$src" ]; then
   ln -sfn "$src" "$HOME/.local/bin/repo"
 fi
 
+# --- openspec ---
+# Node is provided by the devcontainer Node feature, not the Dockerfile build
+# stage, so install the pinned CLI here. Re-running post-create must not
+# reinstall an already-correct version.
+echo "Configuring OpenSpec 2.1.1..."
+if ! command -v openspec >/dev/null 2>&1 ||
+  [ "$(openspec --version 2>/dev/null |
+       grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" != "2.1.1" ]; then
+  echo "Installing OpenSpec 2.1.1..."
+  npm install -g @fission-ai/openspec@2.1.1
+fi
+echo "Verifying OpenSpec..."
+openspec --version
+
 # Kubernetes client-go locks every file listed in KUBECONFIG. On macOS
 # VirtioFS bind mounts the lock file can be created with mode 000, which makes
 # kind fail with "config.lock: permission denied". Keep the writable default
