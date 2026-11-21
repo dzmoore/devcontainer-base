@@ -64,7 +64,21 @@ else
   fi
 fi
 
-# 3. The removed Superpowers planning references are gone.
+# 3. The planning step does not present `openspec propose` as a shell command.
+#    It points at the generated skill or the real CLI commands instead.
+if grep -qF '`openspec propose`' "$orchestration"; then
+  bad "orchestration does not present openspec propose as a shell command"
+else
+  pass "orchestration does not present openspec propose as a shell command"
+fi
+if grep -qF '/openspec-propose' "$orchestration" ||
+   grep -qF 'openspec new change' "$orchestration"; then
+  pass "orchestration points at the propose skill or the CLI commands"
+else
+  bad "orchestration points at the propose skill or the CLI commands"
+fi
+
+# 4. The removed Superpowers planning references are gone.
 for removed in brainstorming writing-plans subagent-driven-development; do
   if grep -qF "$removed" "$orchestration" 2>/dev/null; then
     bad "orchestration no longer references $removed"
@@ -73,7 +87,7 @@ for removed in brainstorming writing-plans subagent-driven-development; do
   fi
 done
 
-# 4. The agent files still name the exact skill IDs they may load.
+# 5. The agent files still name the exact skill IDs they may load.
 declare -A allowed=(
   [implementer]="test-driven-development systematic-debugging verification-before-completion receiving-code-review"
   [validator]="code-review verification-before-completion"
@@ -93,7 +107,7 @@ for agent in implementer validator; do
   done
 done
 
-# 5. Native skills ship as Markdown only, with no scripts directory.
+# 6. Native skills ship as Markdown only, with no scripts directory.
 for skill in "${native_skills[@]}"; do
   dir=".opencode/skills/$skill"
   [ -d "$dir" ] || continue

@@ -64,27 +64,60 @@ else
   bad ".agents/skills contains no plugin file (found: $plugin_files)"
 fi
 
-# 4. The approved change was copied from the spike.
-check_file "openspec/changes/replace-superpowers-with-openspec/proposal.md" \
-  "approved change proposal.md exists"
-check_file "openspec/changes/replace-superpowers-with-openspec/design.md" \
-  "approved change design.md exists"
-check_file "openspec/changes/replace-superpowers-with-openspec/tasks.md" \
-  "approved change tasks.md exists"
-for spec in control-plane-workflow spec-artifacts; do
-  check_file \
-    "openspec/changes/replace-superpowers-with-openspec/specs/$spec/spec.md" \
-    "approved change spec $spec exists"
-done
-
-# 5. The change validates strictly.
-if ! command -v openspec >/dev/null 2>&1; then
-  bad "openspec validate replace-superpowers-with-openspec --strict (openspec not found on PATH)"
-elif validate_output="$(openspec validate replace-superpowers-with-openspec --strict 2>&1)"; then
-  pass "openspec validate replace-superpowers-with-openspec --strict"
+# 4. The approved change is either active or archived. After archive, its delta
+#    specs live on as the living specs.
+change_name="replace-superpowers-with-openspec"
+active_dir="openspec/changes/$change_name"
+archived_dir="$(find openspec/changes/archive -mindepth 1 -maxdepth 1 -type d \
+  -name "*-$change_name" -print -quit 2>/dev/null || true)"
+if [ -d "$active_dir" ]; then
+  change_dir="$active_dir"
+  change_location="active"
+elif [ -n "$archived_dir" ] && [ -d "$archived_dir" ]; then
+  change_dir="$archived_dir"
+  change_location="archived"
 else
-  printf '%s\n' "$validate_output" >&2
-  bad "openspec validate replace-superpowers-with-openspec --strict"
+  change_dir=""
+  change_location="missing"
+fi
+
+if [ "$change_location" = "missing" ]; then
+  bad "approved change exists at $active_dir or openspec/changes/archive/*-$change_name"
+else
+  pass "approved change exists ($change_location)"
+  check_file "$change_dir/proposal.md" "approved change proposal.md exists"
+  check_file "$change_dir/design.md" "approved change design.md exists"
+  check_file "$change_dir/tasks.md" "approved change tasks.md exists"
+  for spec in control-plane-workflow spec-artifacts; do
+    if [ "$change_location" = "active" ]; then
+      check_file "$change_dir/specs/$spec/spec.md" \
+        "approved change spec $spec exists"
+    else
+      check_file "openspec/specs/$spec/spec.md" \
+        "living spec $spec exists after archive"
+    fi
+  done
+fi
+
+# 5. The active change validates strictly; after archive the living specs do.
+if ! command -v openspec >/dev/null 2>&1; then
+  bad "openspec validate --strict (openspec not found on PATH)"
+elif [ "$change_location" = "active" ]; then
+  if validate_output="$(openspec validate "$change_name" --strict 2>&1)"; then
+    pass "openspec validate $change_name --strict"
+  else
+    printf '%s\n' "$validate_output" >&2
+    bad "openspec validate $change_name --strict"
+  fi
+elif [ "$change_location" = "archived" ]; then
+  if validate_output="$(openspec validate --specs --strict 2>&1)"; then
+    pass "openspec validate --specs --strict"
+  else
+    printf '%s\n' "$validate_output" >&2
+    bad "openspec validate --specs --strict"
+  fi
+else
+  bad "openspec validate --strict (approved change not found)"
 fi
 
 # 6. post-create.sh installs the pinned version idempotently.

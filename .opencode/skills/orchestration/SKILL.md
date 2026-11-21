@@ -34,7 +34,8 @@ say which stage you skipped and why.
    TDD tasks. Confirm the repository has an `openspec/` root; if it does not,
    stop and ask the user to run `openspec init` rather than creating the root as
    a side effect. Capture the approved work as OpenSpec change artifacts with
-   `openspec propose`: `proposal.md`, the delta specs under
+   the `/openspec-propose` skill (or the `openspec new change` and
+   `openspec instructions` CLI commands): `proposal.md`, the delta specs under
    `openspec/changes/<change>/specs/<capability>/spec.md`, `design.md` when
    the change is architectural or cross-cutting, and `tasks.md`. Every task in
    `tasks.md` names its failing test and verification command. The proposal is

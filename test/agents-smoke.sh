@@ -60,6 +60,13 @@ else
   bad "AGENTS.md states the plugin.use * deny posture"
 fi
 
+# 2b. The advisory verification sentence names the real CLI command.
+contains "$agents" \
+  'OpenSpec verification (run `openspec validate <change> --strict`) is advisory' \
+  "AGENTS.md names openspec validate in the advisory sentence"
+absent "$agents" 'OpenSpec `verify` is advisory' \
+  "AGENTS.md does not present openspec verify as a command"
+
 # 3. The orchestrator prompt drops the plugin bootstrap and owns openspec/**.
 orchestrator=".opencode/agents/orchestrator.md"
 if [ ! -f "$orchestrator" ]; then

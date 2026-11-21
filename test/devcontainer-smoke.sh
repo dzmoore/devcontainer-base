@@ -1461,9 +1461,15 @@ PY
   echo 'PASS: repo helper syntax'
   bash -n "$REPO/scripts/render-excalidraw.sh"
   echo 'PASS: Excalidraw renderer syntax'
-  say "T1d OpenSpec smoke"
+  say "T1d Agents smoke"
+  bash "$SCRIPT_DIR/agents-smoke.sh"
+  say "T1e Skills smoke"
+  bash "$SCRIPT_DIR/skills-smoke.sh"
+  say "T1f OpenSpec smoke"
   bash "$SCRIPT_DIR/openspec-smoke.sh"
-  say "T1e Docs smoke"
+  say "T1g OpenSpec workflow smoke"
+  bash "$SCRIPT_DIR/openspec-workflow-smoke.sh"
+  say "T1h Docs smoke"
   bash "$SCRIPT_DIR/docs-smoke.sh"
 }
 

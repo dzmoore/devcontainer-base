@@ -54,8 +54,9 @@ change artifacts. Do not run `openspec propose` as a shell command. The CLI
 commands are `openspec init`, `openspec new change`, `openspec status`,
 `openspec instructions`, `openspec validate`, and `openspec archive`.
 
-OpenSpec `verify` is advisory. It supports the workflow but never replaces the
-test suite, `validator`, or `security-reviewer`.
+OpenSpec verification (run `openspec validate <change> --strict`) is advisory.
+It supports the workflow but never replaces the test suite, `validator`, or
+`security-reviewer`.
 
 ## Worker rules
 
