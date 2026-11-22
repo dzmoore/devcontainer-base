@@ -72,31 +72,133 @@ prepare_copy() {
   rm -rf -- "$COPY"
   mkdir -p "$COPY"
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a --exclude .git --exclude test "$REPO/" "$COPY/"
+    rsync -a --exclude .git --exclude test --exclude repos "$REPO/" "$COPY/"
   else
-    (cd "$REPO" && tar --exclude .git --exclude test -cf - .) | (cd "$COPY" && tar -xf -)
+    (cd "$REPO" && tar --exclude .git --exclude test --exclude repos -cf - .) | (cd "$COPY" && tar -xf -)
   fi
-  python3 - "$COPY/.devcontainer/devcontainer.json" "$PREFIX" <<'PY'
+  python3 - "$COPY/.devcontainer/devcontainer.json" "$PREFIX" "$COPY" <<'PY'
 import json, sys
-path, prefix = sys.argv[1], sys.argv[2]
+path, prefix, copy = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as f:
     data = json.load(f)
 mounts = []
 for mount in data.get('mounts', []):
     parts = mount.split(',')
     is_volume = any(p == 'type=volume' for p in parts)
+    m = dict(part.split('=', 1) for part in parts if '=' in part)
+    target = m.get('target') or m.get('dst') or ''
     out = []
     for part in parts:
         if is_volume and (part.startswith('source=') or part.startswith('src=')):
             key, value = part.split('=', 1)
             part = f'{key}={prefix}{value}'
+        elif target == '/etc/opencode' and (part.startswith('source=') or part.startswith('src=')):
+            key, _ = part.split('=', 1)
+            part = f'{key}={copy}/host-opencode'
+        elif target == '/home/developer/.dc/github' and (part.startswith('source=') or part.startswith('src=')):
+            key, _ = part.split('=', 1)
+            part = f'{key}={copy}/host-github'
         out.append(part)
     mounts.append(','.join(out))
 data['mounts'] = mounts
+data['initializeCommand'] = 'true'
 with open(path, 'w') as f:
     json.dump(data, f, indent=2)
     f.write('\n')
 PY
+  mkdir -p "$COPY/host-opencode/agents"
+  mkdir -p "$COPY/host-github"
+  cat >"$COPY/host-github/.env" <<'ENV'
+GITHUB_TOKEN=placeholder-smoke-token
+ENV
+  cat >"$COPY/host-opencode/opencode.json" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "policies": [
+    { "action": "mcp.use", "resource": "search-*", "effect": "allow" }
+  ],
+  "mcp": {
+    "servers": {
+      "search-probe": {
+        "type": "local",
+        "command": ["true"],
+        "enabled": true
+      }
+    }
+  }
+}
+JSON
+  cat >"$COPY/opencode.jsonc" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "project-probe": {
+        "type": "local",
+        "command": ["true"],
+        "enabled": true
+      }
+    }
+  }
+}
+JSON
+  mkdir -p "$COPY/.opencode/plugins"
+  cat >"$COPY/.opencode/plugins/project-probe.js" <<'JS'
+import fs from 'node:fs';
+
+fs.writeFileSync('/tmp/project-plugin-loaded', 'loaded\n');
+
+export default {
+  id: 'project-probe',
+  setup() {
+    fs.writeFileSync('/tmp/project-plugin-ran', 'ran\n');
+  },
+};
+JS
+  rm -f /tmp/project-plugin-ran /tmp/project-plugin-loaded
+  python3 - "$COPY/.devcontainer/devcontainer.json" "$COPY" <<'PY'
+import json, sys
+path, copy = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    data = json.load(f)
+raw = json.dumps(data)
+assert '${localEnv:HOME}' not in raw, 'disposable devcontainer still uses ${localEnv:HOME}'
+for mount in data.get('mounts', []):
+    parts = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
+    if parts.get('type') != 'bind':
+        continue
+    source = parts.get('source') or parts.get('src')
+    assert source, f'bind mount missing source: {mount}'
+    assert source.startswith(copy + '/'), f'bind source outside disposable copy: {source}'
+PY
+  cat >"$COPY/host-opencode/agents/research.md" <<'MD'
+---
+description: Host test research override
+mode: subagent
+permissions:
+  - action: edit
+    resource: "research/host/**"
+    effect: allow
+---
+Host test research override body. Use the test host MCP server for research and
+mark unsupported claims unverified.
+MD
+  say "Preparing hermetic repo remote at $COPY/test-remote.git"
+  rm -rf -- "$COPY/test-remote.git"
+  git init -q --bare "$COPY/test-remote.git"
+  git -C "$COPY/test-remote.git" symbolic-ref HEAD refs/heads/main
+  local_repo="$SMOKE_ROOT/repo-src-${RUN_ID}"
+  rm -rf -- "$local_repo"
+  git init -q "$local_repo"
+  git -C "$local_repo" config user.name "Dev Container Smoke"
+  git -C "$local_repo" config user.email "smoke@example.invalid"
+  printf 'hello\n' >"$local_repo/README.md"
+  git -C "$local_repo" add README.md
+  git -C "$local_repo" commit -q -m 'smoke: initial commit'
+  git -C "$local_repo" branch -M main
+  git -C "$local_repo" remote add origin "$COPY/test-remote.git"
+  git -C "$local_repo" push -q origin main
+  rm -rf -- "$local_repo"
   printf '%s' "$PREFIX" >"$COPY/.dc-smoke-prefix"
   printf '%s' "$COPY" >"$LAST_COPY_FILE"
   echo "PASS: disposable copy and volume prefix $PREFIX"
@@ -240,10 +342,104 @@ check('OPENCODE_CONFIG' not in dc.get('remoteEnv', {}),
       'remoteEnv must not set OPENCODE_CONFIG; OpenCode discovers opencode.jsonc')
 opencode_path = repo / 'opencode.jsonc'
 check(opencode_path.is_file(), 'opencode.jsonc missing')
-if opencode_path.is_file():
-    opencode_text = opencode_path.read_text()
-    check('superpowers@git+https://github.com/obra/superpowers.git' in opencode_text,
-          'opencode.jsonc must enable the superpowers plugin')
+
+# --- opencode control plane ---
+global_path = repo / '.opencode' / 'opencode.global.json'
+check(global_path.is_file(), 'opencode.global.json missing')
+if global_path.is_file():
+    g = json.loads(global_path.read_text())
+    check(g.get('default_agent') == 'orchestrator', 'default_agent must be orchestrator')
+    check(g.get('model') == 'opencode-go/deepseek-v4.1-flash', 'default model mismatch')
+    check('plugins' not in g, 'global config must not load a plugin')
+    check(g.get('experimental', {}).get('subagent_depth') == 1, 'subagent_depth must be 1')
+    check(g.get('worktree', {}).get('directory') == '/workspace/repos/.worktrees', 'worktree directory mismatch')
+    check(g.get('agents', {}).get('build', {}).get('disabled') is True, 'build must be disabled')
+    check(g.get('agents', {}).get('plan', {}).get('disabled') is True, 'plan must be disabled')
+    check('/workspace/.opencode/AGENTS.md' in g.get('instructions', []), 'AGENTS.md instruction missing')
+    global_perms = g.get('permissions', [])
+    global_policies = g.get('policies', [])
+    def has_global_policy(action, resource, effect):
+        return any(
+            rule.get('action') == action
+            and rule.get('resource') == resource
+            and rule.get('effect') == effect
+            for rule in global_policies)
+    check(has_global_policy('mcp.use', '*', 'deny'),
+          'global config must deny mcp.use * in policies')
+    check(has_global_policy('plugin.use', '*', 'deny'),
+          'global config must deny plugin.use * in policies')
+    check(not any(rule.get('action') == 'plugin.use' and rule.get('effect') == 'allow'
+                  for rule in global_policies),
+          'global config must not allow any plugin.use rule')
+    for action in ('mcp.use', 'plugin.use'):
+        check(not any(rule.get('action') == action for rule in global_perms),
+              f'global config must not put {action} under permissions')
+
+project = json.loads(opencode_path.read_text()) if opencode_path.is_file() else {}
+check('plugins' not in project, 'opencode.jsonc must not load a plugin')
+check('mcp' not in project, 'opencode.jsonc must not define MCP servers; use the host overlay')
+
+for rel in (
+    '.opencode/superpowers',
+    '.opencode/superpowers.lock',
+    '.opencode/superpowers-local.patch',
+    'scripts/update-superpowers.sh',
+):
+    check(not (repo / rel).exists(), f'{rel} must be removed')
+check((repo / '.opencode' / 'AGENTS.md').is_file(), '.opencode/AGENTS.md missing')
+
+check((repo / 'openspec' / 'config.yaml').is_file(), 'openspec/config.yaml missing')
+check((repo / '.agents' / 'skills' / 'openspec-propose' / 'SKILL.md').is_file(),
+      '.agents/skills/openspec-propose/SKILL.md missing')
+
+native_skills = (
+    'test-driven-development',
+    'systematic-debugging',
+    'verification-before-completion',
+    'receiving-code-review',
+    'using-git-worktrees',
+    'finishing-a-development-branch',
+)
+for skill in native_skills:
+    check((repo / '.opencode' / 'skills' / skill / 'SKILL.md').is_file(),
+          f'native skill {skill} missing')
+
+openspec_flow_skill = repo / '.opencode' / 'skills' / 'orchestration' / 'SKILL.md'
+check(openspec_flow_skill.is_file(), 'orchestration skill missing')
+if openspec_flow_skill.is_file():
+    openspec_flow_text = openspec_flow_skill.read_text()
+    for marker in ('openspec/changes/', 'openspec/specs/', 'openspec validate',
+                   'advisory'):
+        check(marker in openspec_flow_text,
+              f'orchestration skill missing OpenSpec flow marker {marker!r}')
+
+agents_text = (repo / '.opencode' / 'AGENTS.md').read_text()
+check('enforced by policy' in agents_text,
+      'AGENTS.md must say host-only MCP is enforced by policy')
+check('trusted input' in agents_text,
+      'AGENTS.md must say clone agent/skill definitions are trusted input')
+check('Neither the\norchestrator nor an implementer may approve its own exception.' in agents_text,
+      'AGENTS.md must require explicit user approval for TDD exceptions')
+check('Read-only is a guardrail, not a sandbox' in agents_text,
+      'AGENTS.md must say read-only is a guardrail, not a sandbox')
+check('new host search server' in agents_text and 'search-` prefix' in agents_text,
+      'AGENTS.md must say every new host search server uses the search- prefix')
+check('search-*' in agents_text and 'prefix' in agents_text,
+      'AGENTS.md must document the search-* server-name prefix')
+check('non-search host MCP server' in agents_text and 'non-research agent' in agents_text,
+      'AGENTS.md must require explicit denies for non-search MCP servers')
+security_skill = repo / '.opencode' / 'skills' / 'security-review' / 'SKILL.md'
+check(security_skill.is_file(), 'security-review skill missing')
+if security_skill.is_file():
+    security_text = security_skill.read_text()
+    check('non-research control-plane agent' in security_text,
+          'security-review skill must name every non-research control-plane agent')
+    check('only agent allowed' in security_text,
+          'security-review skill must say research is the only agent allowed MCP use')
+    check('search-*' in security_text,
+          'security-review skill must use the search-* server-name convention')
+check('# --- opencode control plane ---' in (repo / '.devcontainer/post-create.sh').read_text(),
+      'post-create must install the control plane')
 
 # Copy writer agent and vendored writing skills
 opencode_config = repo / 'opencode.jsonc'
@@ -282,13 +478,8 @@ if copy_agent.is_file():
     for denied in ('.opencode/**', '.git/**', 'node_modules/**'):
         check(f'resource: "{denied}"' in agent_text,
               f'copy-writer must not edit {denied}')
-    mcp_servers = []
-    if opencode_config.is_file():
-        mcp_servers = re.findall(r'"([^"]+)"\s*:\s*\{\s*"type"',
-                                 opencode_config.read_text())
-    for server in mcp_servers:
-        check(f'action: "{server}_*"' in agent_text,
-              f'copy-writer must deny MCP server {server}')
+    check('action: "search-*"' in agent_text,
+          'copy-writer must deny MCP servers matching search-*')
     check('resource: "*--output*"' in agent_text,
           'copy-writer must deny shell --output writes')
     check('resource: "*>*"' in agent_text,
@@ -336,8 +527,8 @@ if copy_agent.is_file():
         ('shell', 'scripts/render-excalidraw.sh docs/diagrams/process.excalidraw', 'allow'),
         ('skill', 'writing-commits-and-pull-requests', 'allow'),
         ('skill', 'run-research', 'deny'),
-        ('parallel-search_web_search', '*', 'deny'),
-        ('brave-search-mcp-server_brave_web_search', '*', 'deny'),
+        ('search-parallel_web_search', '*', 'deny'),
+        ('search-brave_brave_web_search', '*', 'deny'),
         ('experimental_image_generate', 'opencode-go/deepseek-v4.1-flash', 'deny'),
     ]
     for action, resource, expected in permission_cases:
@@ -459,6 +650,89 @@ if readme_path.is_file():
                    'obra/the-elements-of-style', '#### Diagrams',
                    'render-excalidraw.sh', 'diagramming-processes'):
         check(marker in readme_text, f'README.md missing {marker}')
+    check('### Host MCP and agent overrides' in readme_text,
+          'README.md missing the Host MCP and agent overrides section')
+    check('~/.devcontainer/opencode/opencode.json' in readme_text,
+          'README.md must show the host overlay config path')
+    check('search-parallel' in readme_text and 'search-brave' in readme_text,
+          'README.md must document the search-parallel and search-brave example servers')
+    check('mcp.use search-*' in readme_text,
+          'README.md must document the mcp.use search-* policy')
+    check('~/.devcontainer/opencode/secrets/brave_api_key' in readme_text,
+          'README.md must point MCP secrets at the overlay secret file')
+    check('~/.devcontainer/brave/.env` is no longer mounted' in readme_text,
+          'README.md must document the legacy Brave .env migration')
+    check('mkdir -p ~/.devcontainer/github ~/.devcontainer/brave' not in readme_text,
+          'README.md must not tell users to create the legacy Brave .env directory')
+    check('/etc/opencode' in readme_text,
+          'README.md must document the host-only MCP overlay at /etc/opencode')
+    check('enforced by policy' in readme_text,
+          'README.md must say host-only MCP is enforced by policy')
+    check('trusted input' in readme_text,
+          'README.md must say clone agent/skill definitions are trusted input')
+    check('@brave/brave-search-mcp-server@2.1.5' in readme_text,
+          'README.md must pin the Brave MCP package')
+    check('a guardrail, not a sandbox' in readme_text,
+          'README.md must say read-only is a guardrail, not a sandbox')
+    check('new host search server' in readme_text and 'search-` prefix' in readme_text,
+          'README.md must say every new host search server uses the search- prefix')
+    check('non-search host MCP server' in readme_text and 'non-research agent' in readme_text,
+          'README.md must say a non-search host MCP needs a deny in every non-research agent')
+    check('Two read-only bind mounts' in readme_text,
+          'README.md must say two read-only bind mounts remain after Brave removal')
+    check('`/etc/opencode` to be mounted and read-only' in readme_text,
+          'README.md smoke-real note must mention the /etc/opencode overlay')
+
+    def readme_section(heading):
+        start = readme_text.find(heading)
+        if start == -1:
+            return None
+        rest = readme_text[start + len(heading):]
+        following = re.search(r'(?m)^#{3} ', rest)
+        return rest[:following.start()] if following else rest
+
+    control_section = readme_section('### Control plane and agent workflow')
+    check(control_section is not None,
+          'README.md missing the Control plane and agent workflow section')
+    if control_section is not None:
+        for role in ('orchestrator', 'research', 'copy-writer', 'design',
+                     'rubber-duck', 'task-enumerator', 'implementer',
+                     'validator', 'security-reviewer'):
+            check(role in control_section,
+                  f'README.md control plane section must name {role}')
+
+    model_section = readme_section('### Change an agent model')
+    check(model_section is not None,
+          'README.md missing the Change an agent model section')
+    if model_section is not None:
+        for marker in ('model:', 'test/devcontainer-smoke.sh', 'same change'):
+            check(marker in model_section,
+                  f'README.md model section missing {marker!r}')
+
+    tdd_section = readme_section('### Test-driven development')
+    check(tdd_section is not None,
+          'README.md missing the Test-driven development section')
+    if tdd_section is not None:
+        for marker in ('red-green-refactor', 'explicit user approval'):
+            check(marker in tdd_section,
+                  f'README.md TDD section missing {marker!r}')
+
+    check('scripts/update-writing-skills.sh --check' in readme_text,
+          "README.md missing update command 'scripts/update-writing-skills.sh --check'")
+
+    code_review_skill = repo / '.opencode' / 'skills' / 'code-review' / 'SKILL.md'
+    check(code_review_skill.is_file(), 'code-review skill missing')
+    if code_review_skill.is_file():
+        banned = 'Ask the orchestrator for anything missing before you start.'
+        check(banned not in code_review_skill.read_text(),
+              'code-review skill must not tell reviewers to ask the orchestrator before starting')
+
+    orchestration_skill = repo / '.opencode' / 'skills' / 'orchestration' / 'SKILL.md'
+    check(orchestration_skill.is_file(), 'orchestration skill missing')
+    if orchestration_skill.is_file():
+        orchestration_text = orchestration_skill.read_text()
+        check('readlink -f' in orchestration_text and 'symlink' in orchestration_text,
+              'orchestration skill must resolve copy-writer paths and reject symlinks')
 
 update_script = repo / 'scripts' / 'update-writing-skills.sh'
 check(update_script.is_file(), 'writing skills update script missing')
@@ -497,12 +771,157 @@ if renderer.is_file():
 for mount in dc.get('mounts', []):
     m = dict(part.split('=', 1) for part in mount.split(',') if '=' in part)
     target = m.get('target') or m.get('dst') or ''
-    check(target.startswith('/home/developer') or target == '/worktrees',
+    check(target.startswith('/home/developer') or target == '/etc/opencode',
           f'mount target outside developer home: {target}')
     check('/home/vscode' not in target, f'vscode mount target: {target}')
 check(any('source=kubeconfig' in mount and 'target=/home/developer/.kube' in mount
           for mount in dc.get('mounts', [])),
       'devcontainer.json must mount the kubeconfig volume at /home/developer/.kube')
+
+# --- host MCP overlay ---
+check(dc.get('initializeCommand') == 'bash .devcontainer/host-init.sh',
+      'initializeCommand must run bash .devcontainer/host-init.sh')
+check(dc.get('updateRemoteUserUID') is True,
+      'updateRemoteUserUID must be true')
+overlay_mounts = []
+for mount in dc.get('mounts', []):
+    parts = mount.split(',')
+    m = dict(part.split('=', 1) for part in parts if '=' in part)
+    target = m.get('target') or m.get('dst') or ''
+    if target == '/etc/opencode':
+        overlay_mounts.append((parts, m))
+check(len(overlay_mounts) == 1,
+      'devcontainer.json must mount the host overlay at /etc/opencode once')
+if overlay_mounts:
+    parts, m = overlay_mounts[0]
+    check((m.get('src') or m.get('source')) == '${localEnv:HOME}/.devcontainer/opencode',
+          'host overlay mount must use the host config directory')
+    check(m.get('type') == 'bind', 'host overlay mount must be a bind mount')
+    check('ro' in parts, 'host overlay mount must be read-only')
+    check('bind-create-src' not in parts,
+          'host overlay mount must not use bind-create-src')
+
+host_init = repo / '.devcontainer' / 'host-init.sh'
+check(host_init.is_file(), 'host-init.sh missing')
+example_dir = repo / '.devcontainer' / 'examples' / 'opencode'
+example_config = example_dir / 'opencode.json'
+example_agent = example_dir / 'agents' / 'research.md'
+check(example_config.is_file(), 'host overlay example opencode.json missing')
+check(example_agent.is_file(), 'host overlay example research.md missing')
+if example_config.is_file():
+    example_text = example_config.read_text()
+    for server in ('search-parallel', 'search-brave'):
+        check(f'"{server}"' in example_text,
+              f'host overlay example must define {server}')
+    for server in ('parallel-search', 'brave-search-mcp-server'):
+        check(f'"{server}"' not in example_text,
+              f'host overlay example must not define the legacy {server} server name')
+    example = json.loads(example_text)
+    example_perms = example.get('permissions', [])
+    example_policies = example.get('policies', [])
+    mcp_use_grants = [rule for rule in example_policies
+                      if rule.get('action') == 'mcp.use']
+    check(len(mcp_use_grants) == 1
+          and mcp_use_grants[0].get('resource') == 'search-*'
+          and mcp_use_grants[0].get('effect') == 'allow',
+          'host overlay example must allow mcp.use search-* in one policy')
+    check(not any(rule.get('action') in ('mcp.use', 'plugin.use')
+                  for rule in example_perms),
+          'host overlay example must not put mcp.use/plugin.use under permissions')
+    brave = example.get('mcp', {}).get('servers', {}).get('search-brave', {})
+    check('@brave/brave-search-mcp-server@2.1.5' in brave.get('command', []),
+          'host overlay example must pin @brave/brave-search-mcp-server@2.1.5')
+    check(brave.get('environment', {}).get('BRAVE_API_KEY')
+          == '{file:/etc/opencode/secrets/brave_api_key}',
+          'host overlay example must read the Brave key from the overlay secret file')
+if example_agent.is_file():
+    check('description:' in example_agent.read_text(),
+          'host overlay example research override must define a description')
+
+smoke_text = (repo / 'test' / 'devcontainer-smoke.sh').read_text()
+overlay_heredoc = re.search(
+    r'cat >"\$COPY/host-opencode/opencode\.json" <<\'JSON\'\n(.*?)\nJSON',
+    smoke_text, re.S)
+check(overlay_heredoc is not None, 'hermetic host overlay heredoc missing')
+if overlay_heredoc:
+    heredoc = overlay_heredoc.group(1)
+    check('"enabled": true' in heredoc,
+          'hermetic host overlay probe must be enabled so it can be listed')
+    overlay_json = json.loads(heredoc)
+    overlay_perms = overlay_json.get('permissions', [])
+    overlay_policies = overlay_json.get('policies', [])
+    check(any(rule.get('action') == 'mcp.use'
+              and rule.get('resource') == 'search-*'
+              and rule.get('effect') == 'allow'
+              for rule in overlay_policies),
+          'hermetic host overlay must allow mcp.use search-* in policies')
+    check(not any(rule.get('action') in ('mcp.use', 'plugin.use')
+                  for rule in overlay_perms),
+          'hermetic host overlay must not put mcp.use/plugin.use under permissions')
+run_smoke_pos = smoke_text.find('\nrun_smoke() {')
+run_smoke_end = smoke_text.find('\nrun_paste() {', run_smoke_pos)
+smoke_body = (smoke_text[run_smoke_pos:run_smoke_end]
+              if run_smoke_pos != -1 and run_smoke_end != -1 else '')
+marker_pos = smoke_body.find('/workspace/.dc-smoke-prefix')
+guard_pos = smoke_body.find('if [ "$hermetic" -eq 1 ]')
+desc_pos = smoke_body.find('Host test research override')
+probe_pos = smoke_body.find('check "host overlay: search-probe listed"')
+gate_end_pos = smoke_body.find('check "host overlay: /etc/opencode read-only"')
+repo_clone_pos = smoke_body.find('repo clone: local remote')
+repo_worktree_pos = smoke_body.find('repo worktree: path exists')
+check(marker_pos != -1, 'run_smoke must detect the disposable copy marker')
+check(guard_pos != -1 and marker_pos < guard_pos,
+      'run_smoke must gate hermetic checks on the disposable copy')
+check(guard_pos != -1 and desc_pos > guard_pos,
+      'research override assertion must be inside the hermetic gate')
+for marker in ("research.get('system'", 'Host test research override body',
+               'research/host/**', "research.get('model'"):
+    check(marker in smoke_body,
+          f'host override test must assert {marker!r}')
+check(guard_pos != -1 and probe_pos > guard_pos,
+      'search-probe assertion must be inside the hermetic gate')
+for marker in ('project-probe', 'project-plugin-ran', 'project-plugin-loaded'):
+    check(marker in smoke_body,
+          f'run_smoke must assert the project probe deny {marker!r}')
+for marker in ('invalid worktree name', 'invalid fork owner',
+               'clone source must not contain', 'invalid pull request number'):
+    check(marker in smoke_body,
+          f'run_smoke must assert the C1 validation message {marker!r}')
+check(re.search(r'\bdie\b', smoke_body) is None,
+      'run_smoke must not call the host-only die helper inside the container')
+check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_clone_pos < gate_end_pos,
+      'repo clone test must be inside the disposable-copy gate')
+check(guard_pos != -1 and gate_end_pos != -1 and guard_pos < repo_worktree_pos < gate_end_pos,
+      'repo worktree test must be inside the disposable-copy gate')
+check('hermetic repo remote missing' not in smoke_body,
+      'repo test must skip, not fail, when the hermetic remote is absent')
+check('cd "$clone_dir" && opencode --standalone debug agents' in smoke_body,
+      'clone inheritance test must run OpenCode from the clone')
+check('clone inheritance: global link' in smoke_body
+      and '$HOME/.config/opencode/' in smoke_body,
+      'clone inheritance test must assert the global agent symlink')
+
+copy_start = smoke_text.find('prepare_copy() {')
+copy_end = smoke_text.find('\n}\n\nlast_copy() {', copy_start)
+copy_body = smoke_text[copy_start:copy_end] if copy_start != -1 and copy_end != -1 else ''
+check(copy_body != '', 'prepare_copy function missing')
+if copy_body:
+    copy_lines = copy_body.splitlines()
+    rsync_line = next((line for line in copy_lines if re.match(r'\s*rsync\b', line)), '')
+    tar_line = next((line for line in copy_lines if re.search(r'\btar\b', line)
+                     and '--exclude' in line), '')
+    check('--exclude repos' in rsync_line,
+          'prepare_copy rsync must exclude repos/')
+    check('--exclude repos' in tar_line,
+          'prepare_copy tar fallback must exclude repos/')
+    for marker in ("parts.get('source')", "assert '${localEnv:HOME}' not in",
+                   'source.startswith(copy'):
+        check(marker in copy_body,
+              f'prepare_copy must parse the rewritten devcontainer with {marker!r}')
+    check('$COPY/host-github' in copy_body,
+          'prepare_copy must create a disposable GitHub fixture')
+    check('host-brave.env' not in copy_body and '.dc/brave' not in copy_body,
+          'prepare_copy must not rewrite or create a legacy Brave .env fixture')
 
 dockerfile = dockerfile_path.read_text()
 check(re.search(r'useradd\b[^\n]*--shell\s+/bin/bash', dockerfile) is not None,
@@ -520,7 +939,13 @@ check('chown -R $USERNAME:$USERNAME' in dockerfile,
       'Dockerfile must chown pre-created volume mount targets')
 check('/home/$USERNAME/.local' in dockerfile and '/home/$USERNAME/.config' in dockerfile,
       'Dockerfile must chown the .local and .config parents')
-check('/worktrees' in dockerfile, 'Dockerfile must pre-create /worktrees')
+chown_block = re.search(r'chown -R \$USERNAME:\$USERNAME(.*?)(?:\n\s*&&|\n\n)', dockerfile, re.S)
+check(chown_block is None or '/worktrees' not in chown_block.group(0),
+      'Dockerfile must not chown /worktrees')
+check('ln -s /workspace/repos /worktrees' in dockerfile,
+      'Dockerfile must link /worktrees to /workspace/repos')
+check(not re.search(r'(?m)^\s*/worktrees\s*\\?\s*$', dockerfile),
+      'Dockerfile must not pre-create /worktrees as a directory')
 for arg in ('NVIM_VERSION', 'STARSHIP_VERSION', 'GLOW_VERSION',
             'KUBECTL_VERSION', 'HELM_VERSION',
             'GLOW_SHA256_AMD64', 'GLOW_SHA256_ARM64',
@@ -564,14 +989,25 @@ check('specify' not in dockerfile.lower(), 'Dockerfile must not install Spec Kit
 check('spec-kit' not in dockerfile.lower(), 'Dockerfile must not mention Spec Kit')
 
 post = post_path.read_text()
+check('# --- opencode host secrets ---' in post,
+      'post-create.sh missing opencode host secrets marker')
+check('{file:' in post, 'post-create.sh must validate {file:...} host secrets')
+check('done < <(' in post,
+      'post-create.sh secret validation must use process substitution')
 check('vscode' not in post.lower(), 'post-create.sh still references vscode')
 check('YQ_VERSION' not in post, 'post-create.sh should not reinstall yq')
 check('export $(' not in post, 'post-create.sh uses unsafe export $(...)')
 check('[ -f "$GITHUB_ENV_FILE" ]' in post, 'post-create.sh must use -f for env files')
 check('# --- github env ---' in post, 'post-create.sh missing github env marker')
-check('# --- brave env ---' in post, 'post-create.sh missing brave env marker')
-check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees' in post,
-      'post-create.sh must chown .local, .config, .kube, and /worktrees to the runtime user')
+check('# --- brave env ---' not in post,
+      'post-create.sh must not install the legacy Brave env loader')
+check('BRAVE_ENV_FILE' not in post,
+      'post-create.sh must not reference BRAVE_ENV_FILE')
+check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"' in post,
+      'post-create.sh must chown .local, .config, and .kube to the runtime user')
+chown_line = re.search(r'chown -R --no-dereference.*', post)
+check(chown_line is not None and '/worktrees' not in chown_line.group(0),
+      'post-create.sh must not chown /worktrees')
 check('specify' not in post.lower(), 'post-create.sh must not verify Spec Kit')
 check('glow --version' in post, 'post-create.sh must verify Glow')
 check('yq --version' in post, 'post-create.sh must verify yq')
@@ -611,6 +1047,9 @@ if github_mounts:
     check('bind-create-src' in parts, 'GitHub credential mount must use bind-create-src')
 check(not any('/.dc/github/.env' in mount for mount in dc.get('mounts', [])),
       'GitHub mount must be the directory, not the single .env file')
+check(not any('/.dc/brave' in mount or '.devcontainer/brave' in mount
+              for mount in dc.get('mounts', [])),
+      'devcontainer.json must not mount the legacy Brave .env file')
 
 for name in ('gh-app-token', 'gh-app'):
     helper = repo / '.devcontainer' / 'bin' / name
@@ -624,6 +1063,80 @@ check('for helper in gh-app-token gh-app' in post,
       'post-create.sh must install both GitHub App helpers')
 check('ln -sfn "$src" "$HOME/.local/bin/$helper"' in post,
       'post-create.sh must symlink the helpers into ~/.local/bin')
+
+# --- multi-repo workspace ---
+gitignore_path = repo / '.gitignore'
+check(gitignore_path.is_file(), '.gitignore missing')
+if gitignore_path.is_file():
+    ignore_lines = set(gitignore_path.read_text().splitlines())
+    check('/repos/' in ignore_lines, '.gitignore must contain /repos/')
+    check('/.superpowers/' in ignore_lines, '.gitignore must keep /.superpowers/')
+
+check(not any('source=worktrees' in mount for mount in dc.get('mounts', [])),
+      'devcontainer.json must not mount the worktrees volume')
+check(not any((dict(part.split('=', 1) for part in mount.split(',') if '=' in part).get('target')
+               or dict(part.split('=', 1) for part in mount.split(',') if '=' in part).get('dst'))
+              == '/worktrees' for mount in dc.get('mounts', [])),
+      'devcontainer.json must not mount anything at /worktrees')
+
+check('mkdir -p /workspace/repos' in post,
+      'post-create.sh must create /workspace/repos')
+check('mountpoint -q /worktrees' in post,
+      'post-create.sh must guard an old /worktrees mountpoint')
+check(re.search(r'ln\s+-s(?:f)?n?\s+/workspace/repos\s+/worktrees', post) is not None,
+      'post-create.sh must link /worktrees to /workspace/repos')
+check('ln -sfn "$src" "$HOME/.local/bin/repo"' in post,
+      'post-create.sh must symlink the repo helper into ~/.local/bin')
+
+smoke_text = (repo / 'test' / 'devcontainer-smoke.sh').read_text()
+repo_helper = repo / '.devcontainer' / 'bin' / 'repo'
+check(repo_helper.is_file(), '.devcontainer/bin/repo missing')
+check(os.access(repo_helper, os.X_OK), '.devcontainer/bin/repo must be executable')
+if repo_helper.is_file():
+    repo_text = repo_helper.read_text()
+    for marker in ('set -euo pipefail',
+                   'ROOT="${REPO_ROOT:-/workspace/repos}"',
+                   'check >/dev/null',
+                   'git-credential',
+                   'pr checkout',
+                   'git worktree add'):
+        check(marker in repo_text, f'repo helper must contain {marker!r}')
+    for marker in ('validate_component', 'validate_slug', 'ensure_under',
+                   'ensure_root', 'realpath -m', 'warn_clone_config',
+                   'readlink -f', 'GITHUB_APP_ENV_FILE',
+                   'export GITHUB_APP_ENV_FILE',
+                   'opencode/opencode.json'):
+        check(marker in repo_text,
+              f'repo helper must validate paths and env with {marker!r}')
+    for marker in ('repo worktree ../escape', 'repo fork upstream/repo ..',
+                   'repo clone ../repo', 'repo pr --detach'):
+        check(marker in smoke_text,
+              f'smoke test must include the negative repo case {marker!r}')
+
+check('file:///workspace/test-remote.git' in smoke_text,
+      'smoke test must clone the hermetic repo remote')
+check('repo worktree' in smoke_text, 'smoke test must exercise repo worktree')
+if readme_path.is_file():
+    check('GITHUB_APP_ENV_FILE' in readme_text,
+          'README.md must document GITHUB_APP_ENV_FILE for repo and gh-app-token')
+    check('repo helper reads `GITHUB_APP_ENV_FILE` first' in readme_text,
+          'README.md must say the repo helper reads GITHUB_APP_ENV_FILE first')
+
+if readme_path.is_file():
+    for marker in ('Working with multiple repositories',
+                   'repo clone dzmoore/provider-confluent --upstream crossplane-contrib/provider-confluent',
+                   'repo switch', 'repo pr', 'repo worktree',
+                   'git worktree repair', '/worktrees'):
+        check(marker in readme_text, f'README.md missing multi-repo marker {marker!r}')
+    check('| `worktrees` |' not in readme_text,
+          'README.md persistent volumes table must not list worktrees')
+    check('cp -R /tmp/devcontainer-base/.opencode/. .opencode/' in readme_text,
+          'README.md copy flow must copy .opencode/')
+    check('cp -R /tmp/devcontainer-base/.devcontainer/. .devcontainer/' in readme_text,
+          'README.md copy flow must copy .devcontainer/ alongside .opencode/')
+    check('degit' not in readme_text
+          or 'npx degit dzmoore/devcontainer-base/.opencode .opencode' in readme_text,
+          'README.md degit tip must copy .opencode or be absent')
 
 # --- timezone contract ---
 container_tz = container_env.get('TZ')
@@ -723,14 +1236,243 @@ if errors:
     sys.exit(1)
 print('PASS: static contract')
 PY
+  say "T1c agent roster"
+  python3 - "$REPO" <<'PY'
+import pathlib, re, sys
+repo = pathlib.Path(sys.argv[1])
+agents_dir = repo / '.opencode' / 'agents'
+skills_dir = repo / '.opencode' / 'skills'
+errors = []
+
+def check(cond, msg):
+    if not cond:
+        errors.append(msg)
+
+model = 'opencode-go/deepseek-v4.1-flash'
+agents = ['orchestrator', 'research', 'copy-writer', 'design', 'rubber-duck',
+          'task-enumerator', 'implementer', 'validator', 'security-reviewer']
+read_only = ('design', 'rubber-duck', 'task-enumerator', 'validator',
+             'security-reviewer')
+workers = agents[1:]
+role_skills = ('orchestration', 'design-proposal', 'rubber-duck',
+               'task-breakdown', 'code-review', 'security-review')
+
+def frontmatter(path):
+    text = path.read_text()
+    if not text.startswith('---\n'):
+        return None
+    end = text.find('\n---', 4)
+    if end == -1:
+        return None
+    return text[4:end]
+
+def scalar(fm, key):
+    match = re.search(rf'(?m)^{re.escape(key)}:\s*(.+?)\s*$', fm)
+    return match.group(1).strip().strip('"') if match else None
+
+def permission_rules(fm):
+    rules = []
+    current = None
+    in_permissions = False
+    for line in fm.splitlines():
+        if re.match(r'^permissions:\s*$', line):
+            in_permissions = True
+            continue
+        if not in_permissions:
+            continue
+        if re.match(r'^\S', line):
+            break
+        match = re.match(r'^\s*-\s+action:\s*(.+?)\s*$', line)
+        if match:
+            current = {'action': match.group(1).strip().strip('"')}
+            rules.append(current)
+            continue
+        match = re.match(r'^\s+(resource|effect):\s*(.+?)\s*$', line)
+        if match and current is not None:
+            current[match.group(1)] = match.group(2).strip().strip('"')
+    return rules
+
+def has_rule(rules, action, resource, effect):
+    return any(rule.get('action') == action
+               and rule.get('resource') == resource
+               and rule.get('effect') == effect for rule in rules)
+
+frontmatters = {}
+for name in agents:
+    path = agents_dir / f'{name}.md'
+    check(path.is_file(), f'agent {name} missing')
+    if not path.is_file():
+        continue
+    fm = frontmatter(path)
+    check(fm is not None, f'agent {name} missing frontmatter')
+    if fm is None:
+        continue
+    frontmatters[name] = fm
+    check(scalar(fm, 'mode') is not None, f'agent {name} missing mode')
+    check(scalar(fm, 'model') == model,
+          f'agent {name} model must be {model}')
+    expected_mode = 'primary' if name == 'orchestrator' else 'subagent'
+    check(scalar(fm, 'mode') == expected_mode,
+          f'agent {name} must be mode: {expected_mode}')
+
+orchestrator = frontmatters.get('orchestrator')
+if orchestrator is not None:
+    rules = permission_rules(orchestrator)
+    check(has_rule(rules, 'edit', '*', 'deny'),
+          'orchestrator must deny edit *')
+    for resource in ('**/openspec/changes/**', '**/.superpowers/**'):
+        check(has_rule(rules, 'edit', resource, 'allow'),
+              f'orchestrator must allow edit {resource}')
+    check(not has_rule(rules, 'edit', '**/openspec/**', 'allow'),
+          'orchestrator must not allow edit on all of **/openspec/**')
+    check(has_rule(rules, 'subagent', '*', 'deny'),
+          'orchestrator must deny subagent *')
+    for worker in workers:
+        check(has_rule(rules, 'subagent', worker, 'allow'),
+              f'orchestrator must allow subagent {worker}')
+    check(has_rule(rules, 'question', '*', 'allow'),
+          'orchestrator must allow question *')
+    check(has_rule(rules, 'skill', '*', 'allow'),
+          'orchestrator must allow skill *')
+
+for name in read_only:
+    fm = frontmatters.get(name)
+    if fm is None:
+        continue
+    rules = permission_rules(fm)
+    check(has_rule(rules, 'edit', '*', 'deny'),
+          f'{name} must deny edit *')
+    check(has_rule(rules, 'question', '*', 'deny'),
+          f'{name} must deny question *')
+    check(has_rule(rules, 'subagent', '*', 'deny'),
+          f'{name} must deny subagent *')
+    for action in ('execute', 'webfetch', 'websearch', 'external_directory',
+                   'opencode_*', 'worktree_*', 'session_*',
+                   'search-*'):
+        check(has_rule(rules, action, '*', 'deny'),
+              f'{name} must deny {action} *')
+
+for name in ('orchestrator', 'copy-writer', 'design', 'rubber-duck',
+             'task-enumerator', 'implementer', 'validator', 'security-reviewer'):
+    fm = frontmatters.get(name)
+    if fm is None:
+        continue
+    rules = permission_rules(fm)
+    check(has_rule(rules, 'search-*', '*', 'deny'),
+          f'{name} must deny search-* *')
+
+strict_read_only = {'design': 'design-proposal',
+                    'rubber-duck': 'rubber-duck',
+                    'task-enumerator': 'task-breakdown'}
+for name, skill in strict_read_only.items():
+    fm = frontmatters.get(name)
+    if fm is None:
+        continue
+    rules = permission_rules(fm)
+    check(has_rule(rules, 'shell', '*', 'deny'),
+          f'{name} must deny shell *')
+    check(has_rule(rules, 'skill', skill, 'allow'),
+          f'{name} must allow its role skill {skill}')
+
+for name in ('validator', 'security-reviewer'):
+    fm = frontmatters.get(name)
+    if fm is None:
+        continue
+    rules = permission_rules(fm)
+    check(has_rule(rules, 'shell', '*', 'allow'),
+          f'{name} must allow shell for tests and git')
+    for resource in ('git push*', 'git reset --hard*', 'rm -rf*'):
+        check(has_rule(rules, 'shell', resource, 'deny'),
+              f'{name} must deny shell {resource}')
+
+implementer = frontmatters.get('implementer')
+if implementer is not None:
+    rules = permission_rules(implementer)
+    check(has_rule(rules, 'edit', '*', 'allow'),
+          'implementer must allow edit *')
+    check(has_rule(rules, 'question', '*', 'deny'),
+          'implementer must deny question *')
+    check(has_rule(rules, 'subagent', '*', 'deny'),
+          'implementer must deny subagent *')
+    check(has_rule(rules, 'shell', '*', 'allow'),
+          'implementer must allow shell *')
+    check(has_rule(rules, 'shell', 'git push*', 'deny'),
+          'implementer must deny git push')
+    check(has_rule(rules, 'shell', 'git reset --hard*', 'deny'),
+          'implementer must deny git reset --hard')
+    for skill in ('test-driven-development', 'systematic-debugging',
+                  'verification-before-completion', 'receiving-code-review'):
+        check(has_rule(rules, 'skill', skill, 'allow'),
+              f'implementer must allow skill {skill}')
+
+research = frontmatters.get('research')
+if research is not None:
+    rules = permission_rules(research)
+    for action, resource, effect, label in (
+            ('edit', '*', 'deny', 'edit *'),
+            ('edit', 'research/**', 'allow', 'edit research/**'),
+            ('shell', '*', 'deny', 'shell *'),
+            ('websearch', '*', 'deny', 'websearch *'),
+            ('execute', '*', 'deny', 'execute *'),
+            ('subagent', '*', 'deny', 'subagent *'),
+            ('question', '*', 'deny', 'question *'),
+            ('search-*', '*', 'allow', 'search MCP tools')):
+        check(has_rule(rules, action, resource, effect),
+              f'research must keep {label}')
+
+copy_writer = frontmatters.get('copy-writer')
+if copy_writer is not None:
+    rules = permission_rules(copy_writer)
+    for action, resource, effect, label in (
+            ('edit', '*', 'deny', 'edit *'),
+            ('edit', '.opencode/**', 'deny', 'edit .opencode/**'),
+            ('search-*', '*', 'deny', 'search MCP deny'),
+            ('subagent', '*', 'deny', 'subagent *'),
+            ('question', '*', 'deny', 'question *')):
+        check(has_rule(rules, action, resource, effect),
+              f'copy-writer must keep {label}')
+
+found_skills = {path.parent.name: path
+                for path in skills_dir.rglob('SKILL.md')}
+for skill in role_skills:
+    check(skill in found_skills, f'role skill {skill} missing SKILL.md')
+check('run-research' in found_skills, 'run-research skill missing')
+for skill in ('technical-writing', 'writing-design-docs', 'recording-decisions',
+              'writing-changelogs', 'writing-runbooks', 'writing-issues',
+              'writing-postmortems', 'documenting-legacy-codebases',
+              'diagramming-processes', 'documenting-contracts',
+              'reviewing-technical-prose', 'writing-clearly-and-concisely',
+              'writing-commits-and-pull-requests'):
+    check(skill in found_skills, f'writing skill {skill} missing')
+
+if errors:
+    for error in errors:
+        print(f'FAIL: {error}')
+    sys.exit(1)
+print('PASS: agent roster')
+PY
   bash -n "$REPO/.devcontainer/post-create.sh"
   echo 'PASS: post-create.sh syntax'
+  bash -n "$REPO/.devcontainer/host-init.sh"
+  echo 'PASS: host-init.sh syntax'
   bash -n "$REPO/.devcontainer/bin/gh-app"
   python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
     "$REPO/.devcontainer/bin/gh-app-token"
   echo 'PASS: GitHub App helper syntax'
+  bash -n "$REPO/.devcontainer/bin/repo"
+  echo 'PASS: repo helper syntax'
   bash -n "$REPO/scripts/render-excalidraw.sh"
   echo 'PASS: Excalidraw renderer syntax'
+  say "T1d Agents smoke"
+  bash "$SCRIPT_DIR/agents-smoke.sh"
+  say "T1e Skills smoke"
+  bash "$SCRIPT_DIR/skills-smoke.sh"
+  say "T1f OpenSpec smoke"
+  bash "$SCRIPT_DIR/openspec-smoke.sh"
+  say "T1g OpenSpec workflow smoke"
+  bash "$SCRIPT_DIR/openspec-workflow-smoke.sh"
+  say "T1h Docs smoke"
+  bash "$SCRIPT_DIR/docs-smoke.sh"
 }
 
 run_app_token() {
@@ -821,11 +1563,10 @@ for d in "$HOME/.local/share/opencode" "$HOME/.local/state/opencode" \
     bad "missing dir: $d"
   fi
 done
-if [ -d /worktrees ]; then
-  check_eq "owner: /worktrees" developer "$(stat -c '%U' /worktrees)"
-  if touch /worktrees/.smoke-$$ 2>/dev/null; then rm -f /worktrees/.smoke-$$; pass "/worktrees writable"; else bad "/worktrees not writable"; fi
+if [ -L /worktrees ]; then
+  check_eq "/worktrees symlink" /workspace/repos "$(readlink /worktrees)"
 else
-  bad "missing /worktrees"
+  bad "/worktrees must be a symlink to /workspace/repos"
 fi
 check "locale: en_US.utf8" bash -c "locale -a | grep -qi en_US"
 
@@ -965,6 +1706,192 @@ check "run: glow" glow --version
 check "run: glow version" bash -c "glow --version | grep -qF '${glow_expected#v}'"
 check "run: glow pager" bash -c 'printf "# pager\n" >/tmp/glow-pager.md && env -u PAGER glow /tmp/glow-pager.md --pager </dev/null >/dev/null && rm -f /tmp/glow-pager.md'
 check "run: opencode" opencode --version
+agents_file="$(mktemp)" || { printf 'FAIL: cannot create agents temp file\n' >&2; exit 1; }
+agents_err="$(mktemp)" || { printf 'FAIL: cannot create agents error file\n' >&2; exit 1; }
+if ! opencode --standalone debug agents >"$agents_file" 2>"$agents_err"; then
+  bad "control-plane agents: debug agents failed"
+  sed -n '1,40p' "$agents_err" >&2 || true
+elif ! python3 - "$agents_file" <<'PY'
+import json, sys
+agents = {a['id']: a for a in json.load(open(sys.argv[1]))}
+expected = {'orchestrator','research','copy-writer','design','rubber-duck',
+            'task-enumerator','implementer','validator','security-reviewer'}
+missing = expected - agents.keys()
+assert not missing, f'missing agents: {sorted(missing)}'
+assert agents['orchestrator']['mode'] == 'primary'
+for name in expected - {'orchestrator'}:
+    assert agents[name]['mode'] == 'subagent', name
+for name in expected:
+    resolved = agents[name]['model']
+    assert resolved.get('providerID') == 'opencode-go', name
+    # OpenCode 2.3.0 reports the model id under 'id'; older shapes used 'model'.
+    assert resolved.get('id', resolved.get('model')) == 'deepseek-v4.1-flash', name
+print('PASS: control-plane agents')
+PY
+then
+  bad "control-plane agents"
+fi
+hermetic=0
+if [ -f /workspace/.dc-smoke-prefix ]; then
+  hermetic=1
+fi
+if [ "$hermetic" -eq 1 ]; then
+  if [ -f "$agents_file" ]; then
+    if python3 - "$agents_file" <<'PY'
+import json, sys
+agents = {a['id']: a for a in json.load(open(sys.argv[1]))}
+research = agents.get('research', {})
+description = research.get('description', '')
+assert description == 'Host test research override', description
+system = research.get('system', '')
+assert 'Host test research override body' in system, system[:200]
+model = research.get('model', {})
+assert model.get('providerID') == 'opencode-go', model
+assert model.get('id', model.get('model')) == 'deepseek-v4.1-flash', model
+permissions = research.get('permissions', [])
+def matching(action, resource, effect):
+    return [i for i, rule in enumerate(permissions)
+            if rule.get('action') == action
+            and rule.get('resource') == resource
+            and rule.get('effect') == effect]
+base = matching('edit', 'research/**', 'allow')
+question = matching('question', '*', 'deny')
+host = matching('edit', 'research/host/**', 'allow')
+assert base, permissions
+assert question, permissions
+assert host, permissions
+assert base[0] < host[0], (base, host)
+PY
+    then
+      pass "host overlay: research agent override"
+      pass "host overlay: research body and model"
+      pass "host overlay: research permissions inherit and append"
+    else
+      bad "host overlay: research agent override"
+      bad "host overlay: research body and model"
+      bad "host overlay: research permissions inherit and append"
+    fi
+  fi
+  # The first `opencode mcp list` can start the background service and read an
+  # empty list before it has loaded the host overlay. Retry before failing.
+  mcp_listed=0
+  for _ in $(seq 1 15); do
+    if opencode mcp list >"$HOME/.mcp-list.txt" 2>&1 \
+        && grep -qF 'search-probe' "$HOME/.mcp-list.txt"; then
+      mcp_listed=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$mcp_listed" -eq 1 ]; then
+    check "host overlay: search-probe listed" grep -qF 'search-probe' "$HOME/.mcp-list.txt"
+    if [ -f /etc/opencode/opencode.json ]; then
+      for server in search-parallel search-brave; do
+        if grep -qF "\"$server\"" /etc/opencode/opencode.json; then
+          check "host overlay: $server listed" grep -qF "$server" "$HOME/.mcp-list.txt"
+        fi
+      done
+    fi
+  else
+    check "host overlay: search-probe listed" grep -qF 'search-probe' "$HOME/.mcp-list.txt"
+    sed -n '1,40p' "$HOME/.mcp-list.txt" >&2 || true
+  fi
+  check "host overlay: project-probe denied" bash -c \
+    '! grep -qF "project-probe" "$HOME/.mcp-list.txt"'
+  check "host overlay: project plugin denied" test ! -e /tmp/project-plugin-ran
+  check "host overlay: project plugin module denied" test ! -e /tmp/project-plugin-loaded
+  test_root="$(mktemp -d)"
+  if [ -d /workspace/test-remote.git ]; then
+    if REPO_ROOT="$test_root" repo clone "file:///workspace/test-remote.git" >"$test_root/clone.log" 2>&1; then
+      pass "repo clone: local remote"
+    else
+      bad "repo clone: local remote"
+      sed -n '1,40p' "$test_root/clone.log" >&2 || true
+    fi
+    clone_dir="$test_root/local/test-remote"
+    check "repo clone: checkout exists" test -d "$clone_dir"
+    if [ -d "$clone_dir" ]; then
+      if ( cd "$clone_dir" && opencode --standalone debug agents ) \
+          >"$test_root/clone-agents.json" 2>"$test_root/clone-agents.err"; then
+        pass "clone inheritance: debug agents"
+      else
+        bad "clone inheritance: debug agents"
+        sed -n '1,40p' "$test_root/clone-agents.err" >&2 || true
+      fi
+      if [ -f "$test_root/clone-agents.json" ] \
+          && python3 - "$test_root/clone-agents.json" <<'PY'
+import json, sys
+agents = {a['id']: a for a in json.load(open(sys.argv[1]))}
+expected = {'orchestrator', 'research', 'copy-writer', 'design', 'rubber-duck',
+            'task-enumerator', 'implementer', 'validator', 'security-reviewer'}
+missing = expected - agents.keys()
+assert not missing, f'missing agents: {sorted(missing)}'
+assert agents['orchestrator']['mode'] == 'primary'
+for name in expected - {'orchestrator'}:
+    assert agents[name]['mode'] == 'subagent', name
+for name in expected:
+    model = agents[name]['model']
+    assert model.get('providerID') == 'opencode-go', name
+    assert model.get('id', model.get('model')) == 'deepseek-v4.1-flash', name
+PY
+      then
+        pass "clone inheritance: agents, modes, and models"
+      else
+        bad "clone inheritance: agents, modes, and models"
+      fi
+      for link in agents/orchestrator.md agents/research.md skills/orchestration; do
+        check "clone inheritance: global link $link" test -L "$HOME/.config/opencode/$link"
+      done
+      if ( cd "$clone_dir" && REPO_ROOT="$test_root" repo worktree smoke-wt smoke-branch ) >"$test_root/worktree.log" 2>&1; then
+        pass "repo worktree: created"
+      else
+        bad "repo worktree: created"
+        sed -n '1,40p' "$test_root/worktree.log" >&2 || true
+      fi
+      worktree_dir="$test_root/.worktrees/local/test-remote/smoke-wt"
+      check "repo worktree: path exists" test -d "$worktree_dir"
+      if [ -d "$worktree_dir" ]; then
+        git -C "$clone_dir" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || rm -rf "$worktree_dir"
+      fi
+      if ( cd "$clone_dir" && REPO_ROOT="$test_root" repo worktree ../escape smoke-branch ) \
+          >"$test_root/worktree-escape.log" 2>&1; then
+        bad "repo worktree: rejects traversal"
+      else
+        pass "repo worktree: rejects traversal"
+        check "repo worktree: traversal message" grep -qF 'invalid worktree name' "$test_root/worktree-escape.log"
+      fi
+      check "repo worktree: traversal creates nothing" test ! -e "$test_root/.worktrees/local/escape"
+      check "repo worktree: traversal creates no sibling" test ! -e "$test_root/escape"
+      if ( cd "$clone_dir" && REPO_ROOT="$test_root" repo fork upstream/repo .. ) \
+          >"$test_root/fork-escape.log" 2>&1; then
+        bad "repo fork: rejects traversal"
+      else
+        pass "repo fork: rejects traversal"
+        check "repo fork: traversal message" grep -qF 'invalid fork owner' "$test_root/fork-escape.log"
+      fi
+      check "repo fork: traversal creates nothing" test ! -e "$test_root/repo"
+      check "repo fork: traversal creates no parent sibling" test ! -e "$test_root/../repo"
+      if ( cd "$test_root" && REPO_ROOT="$test_root" repo clone ../repo ) \
+          >"$test_root/clone-escape.log" 2>&1; then
+        bad "repo clone: rejects traversal"
+      else
+        pass "repo clone: rejects traversal"
+        check "repo clone: traversal message" grep -qF "clone source must not contain" "$test_root/clone-escape.log"
+      fi
+      check "repo clone: traversal creates nothing" test ! -e "$test_root/local/repo"
+      if ( cd "$clone_dir" && REPO_ROOT="$test_root" repo pr --detach ) \
+          >"$test_root/pr-option.log" 2>&1; then
+        bad "repo pr: rejects option injection"
+      else
+        pass "repo pr: rejects option injection"
+        check "repo pr: injection message" grep -qF 'invalid pull request number' "$test_root/pr-option.log"
+      fi
+    fi
+    rm -rf "$test_root"
+  fi
+fi
+check "host overlay: /etc/opencode read-only" bash -c \
+  'findmnt -no OPTIONS /etc/opencode 2>/dev/null | tr "," "\n" | grep -qx ro'
 
 docker_ok=0
 for _ in $(seq 1 60); do
@@ -984,11 +1911,16 @@ for d in "$HOME/.local/share/opencode" "$HOME/.local/state/opencode" \
     bad "missing dir: $d"
   fi
 done
-if [ -d /worktrees ]; then
-  check_eq "owner: /worktrees" developer "$(stat -c '%U' /worktrees)"
-  if touch /worktrees/.smoke-$$ 2>/dev/null; then rm -f /worktrees/.smoke-$$; pass "/worktrees writable"; else bad "/worktrees not writable"; fi
+if [ -d /workspace/repos ]; then
+  check_eq "owner: /workspace/repos" developer "$(stat -c '%U' /workspace/repos)"
+  if touch /workspace/repos/.smoke-$$ 2>/dev/null; then rm -f /workspace/repos/.smoke-$$; pass "/workspace/repos writable"; else bad "/workspace/repos not writable"; fi
 else
-  bad "missing /worktrees"
+  bad "missing /workspace/repos"
+fi
+if [ -L /worktrees ]; then
+  check_eq "/worktrees symlink" /workspace/repos "$(readlink /worktrees)"
+else
+  bad "/worktrees must be a symlink to /workspace/repos"
 fi
 
 check "bashrc: kubectl aliases" grep -q '# --- kubectl aliases ---' "$HOME/.bashrc"
@@ -1003,15 +1935,13 @@ check "alias: ll" bash -ic 'type ll >/dev/null 2>&1'
 check "alias: vi" bash -ic 'type vi >/dev/null 2>&1'
 check "alias: gs" bash -ic 'type gs >/dev/null 2>&1'
 check "bashrc: github env" grep -q '# --- github env ---' "$HOME/.bashrc"
-check "bashrc: brave env" grep -q '# --- brave env ---' "$HOME/.bashrc"
+check "bashrc: no legacy brave env" bash -c '! grep -q "# --- brave env ---" "$HOME/.bashrc"'
 if [ -f "$HOME/.dc/github/.env" ]; then
   check "bashrc: github env loads" bash -ic 'test -n "${GITHUB_TOKEN:-}"'
 fi
-if [ -f "$HOME/.dc/brave/.env" ]; then
-  check "bashrc: brave env loads" bash -ic 'test -n "${BRAVE_API_KEY:-}"'
-fi
 check "locale: en_US.utf8" bash -c "locale -a | grep -qi en_US"
 
+rm -f "$agents_file" "$agents_err"
 if [ "$fail" -ne 0 ]; then echo "SMOKE FAILED"; exit 1; fi
 echo "SMOKE PASSED"
 EOS

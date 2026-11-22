@@ -29,7 +29,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 - **AI-assisted workflow** — OpenCode, persistent tool state, and short-lived GitHub App installation tokens for `gh` and `git`.
 - **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, paste-safe terminal settings, and a configurable system timezone that defaults to US/Pacific.
 - **Reproducible** — pinned build-time tools and a Dev Container feature lockfile.
-- **Tested** — a smoke suite covers build, runtime, shell paste, idempotency, volume lifecycle, and timezone overrides.
+- **Tested** — a smoke suite covers build, runtime, multi-repo clone/worktree, shell paste, idempotency, volume lifecycle, and timezone overrides.
 
 ## What's included
 
@@ -40,10 +40,10 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Containers** | Docker-in-Docker, Docker Compose, Buildx |
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), Glow (`glow`) with `less` pager, curl, OpenSSH client, unzip, zip, yq |
-| **AI & workflow** | OpenCode 2.3.0, Neovim 0.12.6, Starship 1.27.0 |
+| **AI & workflow** | OpenCode 2.3.0, OpenSpec 2.1.1, Neovim 0.12.6, Starship 1.27.0 |
 | **Rendering** | Firefox ESR (headless) for the official Excalidraw CLI and PNG diagram rendering |
 | **Shell** | aliases from `aliases.sh`, a `k` wrapper (`k ns`, `k ctx`, otherwise kubectl), kubectl and Helm completion, bracketed paste, TERM fallback, Starship prompt |
-| **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, Kubernetes config, and `/worktrees` |
+| **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, and Kubernetes config; repo clones live in the workspace |
 
 > [!NOTE]
 > The upstream tools installed in the Dockerfile (`yq`, Glow, kubectl, Helm, OpenCode, Neovim, and Starship) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
@@ -73,7 +73,6 @@ Named volumes keep tool state and caches across container rebuilds:
 | `nvim-state` | `~/.local/state/nvim` | Neovim state |
 | `nvim-share` | `~/.local/share/nvim` | Neovim plugins and data |
 | `kubeconfig` | `~/.kube` | Kubernetes config and kind cluster contexts |
-| `worktrees` | `/worktrees` | Git worktrees that survive a rebuild |
 
 > [!WARNING]
 > The volume names are global to the Docker daemon. Projects using this base share the same state and caches. Rename the `source=` values in `devcontainer.json` if you need per-project isolation. The `kubeconfig` volume contains cluster credentials; rename it per project if the clusters must be isolated.
@@ -107,43 +106,84 @@ In VS Code, open the folder and run **Dev Containers: Reopen in Container** from
 
 ### Use it in your project
 
-Copy `.devcontainer/` into the project you want to develop:
+Copy `.devcontainer/` and `.opencode/` into the project you want to develop:
 
 ```bash
 git clone --depth 1 https://github.com/dzmoore/devcontainer-base.git /tmp/devcontainer-base
-mkdir -p .devcontainer
+mkdir -p .devcontainer .opencode
 cp -R /tmp/devcontainer-base/.devcontainer/. .devcontainer/
+cp -R /tmp/devcontainer-base/.opencode/. .opencode/
 rm -rf /tmp/devcontainer-base
 ```
 
-If the project already has a `.devcontainer/`, merge the files instead of overwriting them. Then update the `"name"` in `devcontainer.json` if you like, and reopen the project in the container. The rest of the configuration is self-contained.
+If the project already has a `.devcontainer/` or `.opencode/`, merge the files instead of overwriting them. Then update the `"name"` in `devcontainer.json` if you like, and reopen the project in the container. The rest of the configuration is self-contained.
+
+The project also needs an OpenSpec root. Run `openspec init --tools opencode --scope project --profile core` once inside the container after the copy. The command creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills under `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it. Existing checkouts need the steps in [`docs/migrations/2026-11-20-openspec.md`](docs/migrations/2026-11-20-openspec.md).
 
 > [!TIP]
-> If you use [`degit`](https://github.com/Rich-Harris/degit), you can copy just the configuration with `npx degit dzmoore/devcontainer-base/.devcontainer .devcontainer`.
+> If you use [`degit`](https://github.com/Rich-Harris/degit), copy both configuration directories: `npx degit dzmoore/devcontainer-base/.devcontainer .devcontainer` and `npx degit dzmoore/devcontainer-base/.opencode .opencode`.
 
 ### Optional: host secrets
 
-Two read-only bind mounts make host-side secrets available inside the container:
+Two read-only bind mounts make host-side configuration and secrets available inside the container:
 
 - `~/.devcontainer/github/` provides GitHub credentials. `.env` can hold `GITHUB_TOKEN` for `gh` and the `post-create.sh` Helm `ghcr.io` login, plus the GitHub App variables. `app.pem` holds the App private key.
-- `~/.devcontainer/brave/.env` provides `BRAVE_API_KEY` to tools that read it, such as Brave Search integrations.
+- `~/.devcontainer/opencode/` provides the host MCP and agent overlay mounted at `/etc/opencode`; see [Host MCP and agent overrides](#host-mcp-and-agent-overrides).
 
 Create the files on the host before the first launch:
 
 ```bash
-mkdir -p ~/.devcontainer/github ~/.devcontainer/brave
+mkdir -p ~/.devcontainer/github
 chmod 700 ~/.devcontainer/github
 printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" > ~/.devcontainer/github/.env
-printf 'BRAVE_API_KEY=%s\n' "$BRAVE_API_KEY" > ~/.devcontainer/brave/.env
-chmod 600 ~/.devcontainer/github/.env ~/.devcontainer/brave/.env
+chmod 600 ~/.devcontainer/github/.env
 ```
 
 To use the GitHub App flow instead of, or in addition to, the PAT, put the App variables in the same `.env` and place the private key at `~/.devcontainer/github/app.pem`; see [GitHub App tokens](#github-app-tokens). The existing `/home/developer/.dc/github/.env` path does not change because the whole directory is mounted read-only.
 
-The files are mounted read-only and sourced by interactive bash shells. If you do not need them, remove the corresponding entries from `mounts` in `devcontainer.json`.
+The GitHub `.env` is mounted read-only and sourced by interactive bash shells. If you do not need it, remove the corresponding entry from `mounts` in `devcontainer.json`.
 
 > [!IMPORTANT]
-> Create the GitHub directory and files before the first launch. The GitHub source is now a directory mount; Docker may create a missing directory for it. The Brave source is still a single file, so if Docker creates a directory at `~/.devcontainer/brave/.env`, remove it and create the file before starting the container again.
+> Create the GitHub directory and files before the first launch. The GitHub source is a directory mount; Docker may create a missing directory for it.
+
+#### Migrating from the legacy Brave `.env` mount
+
+`~/.devcontainer/brave/.env` is no longer mounted, and `post-create.sh` no longer adds a `brave env` loader to `.bashrc`. MCP hosts read the Brave key from the overlay secret file `~/.devcontainer/opencode/secrets/brave_api_key`, which the example server references as `{file:/etc/opencode/secrets/brave_api_key}`. After you confirm the overlay secret works, remove the old file.
+
+### Working with multiple repositories
+
+`host-init.sh` creates `repos/` in the project root and adds `repos/` to the repository's real git exclude (`git rev-parse --git-path info/exclude`), so clones never show up as untracked files. The workspace bind mount exposes that directory as `/workspace/repos`, and `/worktrees` is a compatibility symlink to the same path. Clones are ordinary workspace files, so they persist without a named volume.
+
+Use the `repo` helper, which `post-create.sh` symlinks into `~/.local/bin`:
+
+```bash
+repo clone dzmoore/provider-confluent --upstream crossplane-contrib/provider-confluent
+repo switch main
+repo switch --create feature/my-change
+repo pr 123
+repo worktree experiment feature/experiment
+repo list
+```
+
+- `repo clone <owner>/<repo>` clones to `/workspace/repos/<owner>/<repo>`; `--upstream` adds an `upstream` remote and fetches it.
+- `repo clone` also accepts a `file://` URL or absolute path, which is useful for local bare remotes.
+- `repo fork <upstream-owner>/<repo> <fork-owner>` clones the fork and adds the upstream.
+- `repo switch <branch>` uses `git switch`; pass `--create` to create the branch.
+- `repo pr <number>` runs `gh pr checkout`.
+- `repo worktree <name> <branch>` creates `/workspace/repos/.worktrees/<owner>/<repo>/<name>`.
+- `repo list` prints each clone, its branch, and whether it is dirty.
+
+`repo` uses the GitHub App helper when the `GITHUB_APP_*` variables are present in the environment or the env file. The repo helper reads `GITHUB_APP_ENV_FILE` first, then `GITHUB_ENV_FILE`, then `~/.dc/github/.env`, and passes the same file to `gh-app-token check`. `gh-app` performs the clone (`gh repo clone`) and `gh pr checkout`; `gh-app-token git-credential` authenticates network `fetch`. If the App is configured but the check fails, the command prints the error and stops instead of silently downgrading. Without App variables it sources the same env file when `GITHUB_TOKEN` is unset, exports `GH_TOKEN`, and uses plain `gh`/`git`. Tokens are never written into a remote URL.
+
+#### Migrating from the old `worktrees` volume
+
+Earlier versions mounted a named `worktrees` volume at `/worktrees`. Move any clones or worktrees you want to keep into `/workspace/repos`, remove the `source=worktrees` mount from `devcontainer.json`, and recreate the container. After moving a worktree, run `git worktree repair` in the main clone so Git records the new path:
+
+```bash
+git worktree repair /workspace/repos/<owner>/<repo>/<worktree-name>
+```
+
+If `/worktrees` is still an old volume mountpoint or a non-empty directory, `post-create.sh` prints a migration warning and leaves it untouched. A fresh container creates `/worktrees` as a symlink to `/workspace/repos`.
 
 ## Configuration
 
@@ -154,24 +194,39 @@ The files are mounted read-only and sourced by interactive bash shells. If you d
 | `.devcontainer/Dockerfile` | Debian base, non-root user, locale, timezone default, and pinned CLI tools |
 | `.devcontainer/devcontainer.json` | Features, mounts, environment, and lifecycle hooks |
 | `.devcontainer/devcontainer-lock.json` | Resolved Dev Container Feature versions |
-| `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, env loading, ownership repair, shell hooks, helper symlinks, Helm login |
+| `.devcontainer/post-create.sh` | Idempotent setup: timezone reconcile, host secret validation, env loading, ownership repair, shell hooks, helper symlinks, Helm login |
+| `.devcontainer/host-init.sh` | Host-side init: create the overlay directories and the multi-repo workspace, and ignore `repos/` |
+| `.devcontainer/examples/opencode/` | Example host MCP configuration and `research` agent override |
 | `.devcontainer/bin/gh-app-token` | GitHub App installation token CLI: token, JSON, check, exec, and Git credential modes |
 | `.devcontainer/bin/gh-app` | Wrapper that runs `gh` with a freshly minted installation token |
+| `.devcontainer/bin/repo` | Multi-repo helper: clone, fork, list, switch, pr, and worktree |
 | `.devcontainer/aliases.sh` | Interactive shell aliases |
 | `.devcontainer/starship.toml` | Starship prompt configuration |
-| `opencode.jsonc` | OpenCode project config; enables the Superpowers plugin and configures the Parallel Search and Brave Search MCP servers |
+| `opencode.jsonc` | OpenCode project config; minimal, defines no MCP servers, and loads no plugin |
+| `.opencode/opencode.global.json` | Global control-plane config: default `orchestrator`, `AGENTS.md` instruction, worktree directory, and disabled `build` and `plan`; loads no plugin and denies `mcp.use *` and `plugin.use *` |
+| `.opencode/AGENTS.md` | Control-plane instructions: TDD policy, OpenSpec workflow, worker rules, host overlay, and repository paths |
+| `.opencode/agents/` | Nine agent definitions: one primary `orchestrator` and eight subagents |
 | `.opencode/agents/research.md` | Research subagent definition and write/network permissions |
-| `.opencode/skills/run-research/` | Research orchestration skill and report template |
 | `.opencode/agents/copy-writer.md` | Copy writer subagent definition, skill routing, and prose and diagram permissions |
+| `.opencode/skills/` | Role skills, `run-research`, the native process skills, and the vendored writing skills |
+| `.opencode/skills/run-research/` | Research orchestration skill and report template |
 | `.opencode/skills/technical-writer/` | 10 vendored technical-writer skills, MIT license, and upstream pin |
 | `.opencode/skills/elements-of-style/` | Vendored Elements of Style reference and local wrapper |
 | `.opencode/skills/diagramming-processes/` | Local Excalidraw-only diagramming skill, references, and templates |
 | `.opencode/skills/writing-commits-and-pull-requests/` | Local skill for commit messages, pull request text, and review comments |
-| `NOTICE` | Third-party writing material attribution |
+| `openspec/` | OpenSpec config, change proposals under `openspec/changes/`, and living specs under `openspec/specs/` |
+| `.agents/skills/` | Six generated `openspec-*` skills: propose, explore, apply-change, update-change, sync-specs, and archive-change |
+| `NOTICE` | Third-party writing skills and OpenSpec attribution |
 | `scripts/render-excalidraw.sh` | Render `.excalidraw` sources to PNG beside them |
 | `scripts/update-writing-skills.sh` | Refresh or verify the vendored writing skills |
 | `research/` | Local research artifacts (gitignored) |
+| `repos/` | Local multi-repo clones (gitignored, created by host-init) |
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
+| `test/agents-smoke.sh` | Control-plane instructions and agent prompts |
+| `test/skills-smoke.sh` | Native process skills and orchestration |
+| `test/openspec-smoke.sh` | OpenSpec tree, generated skills, and version guards |
+| `test/openspec-workflow-smoke.sh` | Disposable-repo init, propose, validate, and archive flow |
+| `test/docs-smoke.sh` | README, NOTICE, and migration-note contract |
 | `test/paste-smoke.py` | PTY paste regression test |
 
 `devcontainer.json` runs `post-create.sh` as the `postCreateCommand` and waits for it to finish before returning control.
@@ -239,13 +294,192 @@ In VS Code, `${localEnv:...}` is resolved from the environment of the process th
 The config keeps the writable Kubernetes config inside the container and leaves OpenCode's project settings in the workspace:
 
 - `KUBECONFIG=/home/developer/.kube/config` — the container-local file lives in the `kubeconfig` volume and is where kind and kubectl write new contexts. It is intentionally the only default path: client-go locks every file in `KUBECONFIG`, and a workspace path on macOS VirtioFS can break `kind`. To use a project kubeconfig at `.kube/config`, merge or copy it manually; see [kind fails with `config.lock: permission denied`](#kind-fails-with-configlock-permission-denied).
-- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository uses it to enable the [Superpowers](https://github.com/obra/superpowers) plugin; add project-specific OpenCode settings to the same file.
+- `opencode.jsonc` in the workspace root — OpenCode discovers project config automatically. This repository keeps it minimal: it defines no MCP servers and loads no plugin. Add project-specific OpenCode settings to `opencode.jsonc`.
 - `STARSHIP_CONFIG=/workspace/.devcontainer/starship.toml` — the prompt config shipped with this base.
 
 Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your project uses different paths. The configuration also assumes the workspace is mounted at `/workspace`; if you change `workspaceFolder`, update the `/workspace` paths in `containerEnv`, `remoteEnv`, and the `.bashrc` hook in `post-create.sh`.
 
 > [!WARNING]
 > Kubeconfig files usually contain credentials. Do not commit `.kube/config` unless it is safe to share.
+
+### Control plane and agent workflow
+
+`.opencode/` is the canonical control plane. `post-create.sh` symlinks its global
+config, agents, and skills into `~/.config/opencode/`, so the workspace and every
+clone under `/workspace/repos` use the same agents and skills.
+
+`openspec/` is the spec layer. `post-create.sh` installs `@fission-ai/openspec@2.1.1`; OpenSpec requires Node.js 22.20 or newer. Each repository runs `openspec init --tools opencode --scope project --profile core` once. The command creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills in `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it.
+
+Use `/openspec-propose` to create a change. The change holds `proposal.md` with the what and why, plus the delta specs under `openspec/changes/<change>/specs/<capability>/spec.md`. `design.md` records the approach when the change is architectural or cross-cutting, and `tasks.md` lists the ordered tasks. Each task names its failing test and verification command. Do not run `openspec propose` as a shell command.
+
+`orchestrator` is the only primary agent and the default. It owns the request,
+plan, task ledger, delegation, approvals, and final report. The other eight
+agents are subagents:
+
+| Agent | Responsibility |
+| --- | --- |
+| `orchestrator` | Request, plan, ledger, delegation, approvals, and final report |
+| `research` | Current web evidence and cited notes under `research/` |
+| `copy-writer` | Finished prose and Excalidraw diagrams |
+| `design` | Two to four options, trade-offs, a recommendation, and a test strategy |
+| `rubber-duck` | Adversarial critique with severity-ranked findings |
+| `task-enumerator` | Ordered, independently testable TDD tasks |
+| `implementer` | Red-green-refactor implementation with red and green evidence |
+| `validator` | Independent test rerun and acceptance review with a PASS or FAIL verdict |
+| `security-reviewer` | Threat model and security review of the branch and host configuration |
+
+Read-only worker permissions are a guardrail, not a sandbox. They deny writes,
+shell, web, external directories, and session or worktree tools where the role
+does not need them, but a trusted host overlay or a cloned repository can still
+change policy.
+
+The orchestrator delegates in this order:
+
+1. Intake: restate the request and identify the target repository.
+2. Research and design: dispatch `research` when current external evidence is
+   needed, `design` for options, and `rubber-duck` to attack the chosen proposal.
+3. Planning: dispatch `task-enumerator` for ordered tasks, then capture the
+   approved work with `/openspec-propose`.
+4. Execution: dispatch one `implementer` per task and `validator` after each
+   task. The implementer reports RED and GREEN evidence. Do not run implementers
+   in parallel on shared files.
+5. Documentation gate: after behavior is verified, `copy-writer` updates the
+   affected documents. Any change in behavior, command, path, permission, or
+   policy needs a matching document change. `copy-writer` cannot edit
+   `.opencode/**`, code, or tests; an implementer writes those and `copy-writer`
+   reviews the prose.
+6. Final gates: `validator` runs the full suite on the final tree,
+   `security-reviewer` reviews the branch and host configuration, and
+   `openspec validate <change> --strict` runs as supporting evidence.
+7. Merge and push only with explicit user approval.
+
+`openspec archive` folds a completed change's delta specs into `openspec/specs/`. The CLI commands are `openspec init --tools opencode --scope project --profile core`, `openspec new change`, `openspec status`, `openspec instructions`, `openspec validate`, and `openspec archive`. OpenSpec verification (`openspec validate <change> --strict`) is advisory and never replaces `validator` or the test suite.
+
+`build` and `plan` are disabled in `.opencode/opencode.global.json` so
+`orchestrator` is the only primary. Re-enable either one by removing its
+`disabled` entry from the `agents` object and starting a new session. Existing
+sessions keep the agent they stored and need a new session to pick up the
+change.
+
+One maintainer-only script verifies the vendored writing trees.
+`scripts/update-writing-skills.sh --check` compares the technical-writer and
+Elements of Style trees with their pinned commits. It needs network access and
+does not run in `post-create.sh` or the smoke suite. After an OpenSpec pin
+change, run `openspec update` to refresh the generated skills in
+`.agents/skills/`.
+
+### OpenSpec telemetry
+
+OpenSpec telemetry is disabled in this devcontainer. `.devcontainer/devcontainer.json` sets `OPENSPEC_TELEMETRY=0` and `DO_NOT_TRACK=1` in `containerEnv`. `.devcontainer/post-create.sh` runs `openspec config set telemetry.enabled false` after installing the pinned CLI, so the opt-out holds even in shells without the environment variables. `post-create.sh` stops with `OpenSpec telemetry is still enabled` when the CLI keeps the setting on.
+
+Outside this container, set either environment variable, or run:
+
+```bash
+openspec config set telemetry.enabled false
+```
+
+### Change an agent model
+
+Every agent file in `.opencode/agents/` has its own `model:` line. All nine
+agents use `opencode-go/deepseek-v4.1-flash`. To change one agent's model, edit
+its `model:` line and the matching static expectation in
+`test/devcontainer-smoke.sh` in the same change. The static suite checks the
+exact string for every agent, so a model edit without the test edit fails
+`static`.
+
+Apply the change to the running service:
+
+```bash
+opencode reload
+```
+
+### Test-driven development
+
+Every code, configuration, script, and testable infrastructure change uses
+red-green-refactor and starts with a failing test. The `implementer` writes the
+smallest test that expresses the required behavior, runs it and watches it fail
+for the intended reason, writes the smallest change that makes it pass, then
+refactors without changing behavior. It records the red command and output and
+the green command and output in the task report. `validator` checks that the
+test exists and that the red output failed for the intended reason.
+
+A task is done when the new test passes and the existing suite still passes. "I
+tested it manually" is not a substitute for a red test.
+
+Exceptions require explicit user approval. The orchestrator records the
+approval, scope, and reason in the task ledger and the pull request. Neither the
+orchestrator nor the implementer may approve its own exception.
+
+Documentation and prose use the writing skills and a review pass instead of TDD,
+but their links, commands, and claims must still be checked.
+
+### Host MCP and agent overrides
+
+All MCP servers come from a host-owned overlay mounted read-only at
+`/etc/opencode`. The project `opencode.jsonc` defines no MCP servers.
+Host-only MCP is enforced by policy, not just convention: the global
+control-plane config's top-level `policies` deny `mcp.use *` and `plugin.use *`,
+the host overlay's top-level `policies` allow `mcp.use search-*` and any
+non-search server it defines, and no plugin is allowlisted.
+A clone can still add `opencode.json` or `.opencode/` agents and skills.
+Project MCP servers and plugins are blocked by that policy, but clone agent
+and skill definitions are trusted input: a cloned repository can shadow the
+control-plane agents or skills, and `repo clone` warns when it finds them.
+For an untrusted clone, pin the control-plane agents in the host overlay.
+The `initializeCommand` hook runs `bash .devcontainer/host-init.sh` before the
+container starts. The script creates `~/.devcontainer/opencode/` with `secrets/`,
+`agents/`, and `skills/` subdirectories, sets mode `700` on the overlay and
+`secrets/`, and never copies the examples or overwrites a file.
+
+Create the overlay and the secret files on the host:
+
+```bash
+mkdir -p ~/.devcontainer/opencode/secrets
+chmod 700 ~/.devcontainer/opencode ~/.devcontainer/opencode/secrets
+printf '%s\n' "$BRAVE_API_KEY" > ~/.devcontainer/opencode/secrets/brave_api_key
+chmod 600 ~/.devcontainer/opencode/secrets/brave_api_key
+```
+
+The canonical example is `.devcontainer/examples/opencode/opencode.json`. It
+defines `search-parallel` (remote) and `search-brave` (local `npx`). Host search
+servers use the `search-` name prefix, so the example allows `mcp.use search-*`
+in one policy. Every new host search server must use the `search-` prefix. The
+Brave server reads `BRAVE_API_KEY` from
+`{file:/etc/opencode/secrets/brave_api_key}` and pins
+`@brave/brave-search-mcp-server@2.1.5`. Hosts should pin and review every MCP
+package they add; an unpinned `npx` package can change between starts. Copy the
+example to `~/.devcontainer/opencode/opencode.json` and edit it for your host;
+do not add MCP servers to a repository. The example agent override is
+`.devcontainer/examples/opencode/agents/research.md`; copy it to
+`~/.devcontainer/opencode/agents/research.md` to replace the research body while
+inheriting the model and permissions.
+
+If an existing host defines `parallel-search` or `brave-search-mcp-server`,
+rename them to `search-parallel` and `search-brave`, then replace the per-server
+`mcp.use` allows with one `mcp.use search-*` allow. If you keep a different
+search server, give it a name that starts with `search-`. Alternatively, override
+the research agent and its policies in the host overlay. A non-search server
+still needs an explicit deny in every non-research agent.
+
+`post-create.sh` validates every `{file:/etc/opencode/...}` reference in the
+overlay before OpenCode starts. It fails with the exact path when a referenced
+file is missing, unreadable, or empty. Do not print or log secret values.
+
+> [!WARNING]
+> The overlay is mounted read-only, which protects the host copy from accidental
+> modification, not from disclosure. Any process running as `developer` in the
+> container can read the overlay, and the container is privileged for
+> Docker-in-Docker. Host configuration is trusted and can weaken project policy,
+> so review it like code. A repository without the host overlay has no MCP
+> servers, including no research MCP servers.
+
+Docs-only and read-only agents must deny every host search or write-capable MCP
+server. Host search servers use the `search-` name prefix, so every agent except
+`research` denies `search-*`. Every non-search host MCP server needs a matching
+deny in every non-research agent; append it to the host copy at
+`~/.devcontainer/opencode/agents/<agent>.md` as well as the repository agent
+files. Permission rules append to the base rules. `research` is the only agent
+allowed to use the search MCP servers.
 
 ### GitHub App tokens
 
@@ -310,7 +544,7 @@ Editing `.env` in a live interactive shell leaves the old exported values in tha
 
 ### Research subagent
 
-The project config also defines a `research` subagent and a `run-research` skill for evidence-backed web research. The subagent uses the Parallel Search and Brave Search MCP servers configured in `opencode.jsonc` as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
+The control plane defines a `research` subagent and a `run-research` skill for evidence-backed web research. Search MCP servers come from the host overlay at `~/.devcontainer/opencode/opencode.json`, mounted read-only at `/etc/opencode`; the project `opencode.jsonc` defines no MCP servers. Host search servers use the `search-` name prefix, and the subagent uses the tools any of them expose as its primary and only search path; OpenCode's built-in `websearch` is disabled for the `research` agent.
 
 Invoke the skill with a research question:
 
@@ -334,11 +568,20 @@ research/<YYYY-MM-DD>-<slug>/
 
 `research/` is gitignored; do not commit reports or evidence notes. The `research` subagent can write only under `research/**` and cannot use shell or Code Mode, launch subagents, or ask the user.
 
-`BRAVE_API_KEY` must be set before OpenCode starts. If it is missing or either MCP server fails, the research agents continue with the other provider and record the degraded mode. If both MCPs are unavailable, the run marks the affected claims `unverified` rather than falling back to built-in search. Amazon detail pages and Reddit may block fetching; the report marks those claims `unverified` rather than inventing them.
+A `search-*` server that needs a key reads it from
+`~/.devcontainer/opencode/secrets/`, and the secret file must be non-empty before
+OpenCode starts; `post-create.sh` fails with the path when a
+`{file:/etc/opencode/...}` reference is missing, unreadable, or empty. The Brave
+example reads `~/.devcontainer/opencode/secrets/brave_api_key`. If one host MCP
+server fails at runtime, the research agents continue with the others and record
+the degraded mode. A repository without the host overlay has no research MCP
+servers; the worker marks unsupported claims `unverified` rather than falling
+back to built-in search. Amazon detail pages and Reddit may block fetching; the
+report marks those claims `unverified` rather than inventing them.
 
 ### Copy writer subagent
 
-The project config defines a `copy-writer` subagent for finished prose and
+The control plane defines a `copy-writer` subagent for finished prose and
 Excalidraw diagrams: documentation, READMEs, design docs, ADRs, runbooks,
 changelogs, postmortems, issue descriptions, API references, commit messages,
 pull request descriptions and comments, release notes, error messages, and
@@ -363,6 +606,11 @@ ready-to-paste text. It does not commit, post, push, or open pull requests. It
 can run a narrow set of read-only `git` and `gh` commands, plus
 `scripts/render-excalidraw.sh` to render a diagram PNG. It cannot use the web,
 launch subagents, or edit code and configuration.
+
+OpenCode's path permissions do not resolve symlink targets. The orchestrator
+resolves a delegated prose path with `readlink -f` and rejects symlinks or paths
+outside the repository before dispatching `copy-writer`; clones are trusted for
+prose paths.
 
 #### Vendored writing skills
 
@@ -409,11 +657,11 @@ GTK and Mesa dependencies to the image; the CLI does not download a browser.
 The `diagramming-processes` skill is not refreshed by
 `scripts/update-writing-skills.sh`; it is repository-owned.
 
-To refresh the vendored trees, run `scripts/update-writing-skills.sh`; use
-`--check` to verify that the working tree matches the pinned commits. To
+To refresh the vendored writing trees, run `scripts/update-writing-skills.sh`;
+use `--check` to verify that the working tree matches the pinned commits. To
 change a pin, edit the constants at the top of the script and update the
-matching `UPSTREAM.md` and `NOTICE` in the same commit. Both commands need
-network access and are not part of the smoke suite.
+matching `UPSTREAM.md` and `NOTICE` in the same commit. The script needs
+network access and is not part of the smoke suite.
 
 ### Design notes
 
@@ -434,7 +682,7 @@ A few choices are intentional and worth knowing before changing the setup:
 - Helm defaults to `v4.3.1`. To use Helm 3, change `HELM_VERSION` to `v3.22.1` and update the matching per-architecture digest ARGs; Helm 3 security support ends on 2027-02-10.
 - Version support is policy-specific: kubectl `v1.37.2` supports Kubernetes 1.36–1.38, while Helm 4.3.x supports Kubernetes 1.34–1.37.
 - Minikube is no longer included. `kind` remains the local-cluster option; re-add the feature or install minikube manually if a project needs it.
-- Existing containers retain minikube and the other old feature binaries until they are recreated. `smoke-real` will fail the new minikube-absence assertions on those containers.
+- Existing containers retain minikube and the other old feature binaries until they are recreated. `smoke-real` will fail the new minikube-absence assertions on those containers, and it expects `/etc/opencode` to be mounted and read-only because the runtime smoke asserts the overlay policy.
 - The feature's `gnupg2`/`dirmngr` installs and its conditional `jq` install are intentionally gone. Add them explicitly if a project needs GPG verification or jq.
 - `KUBECONFIG` points only at the container-local `/home/developer/.kube/config`. Kubernetes client-go locks every file listed in `KUBECONFIG`; on macOS VirtioFS bind mounts a lock file can be created with mode `000`, which breaks `kind`. The `kubeconfig` volume keeps this directory on the Docker volume filesystem and preserves contexts across rebuilds. `post-create.sh` creates the file, sets it to `0600`, and removes stale lock files. Do not add `/workspace/.kube/config` to the default `KUBECONFIG`; merge a project config manually instead.
 - The `developer` username is part of the test contract. If you change it, update the Dockerfile default, `remoteUser`, mounts, `remoteEnv`, and smoke tests together.
@@ -465,16 +713,18 @@ test/devcontainer-smoke.sh cleanup
 
 The PTY test covers raw paste, bracketed paste, heredocs, `TERM` fallback, and `stty -ixon` across `xterm-ghostty`, `dumb`, and `xterm-256color`.
 
+The runtime smoke suite also clones a hermetic local bare remote with `repo clone`, creates a worktree with `repo worktree`, and asserts both paths. It uses a temporary `REPO_ROOT` and a `file://` URL, so it needs no network access or GitHub credentials.
+
 Timezone coverage is layered: `static` checks the Dockerfile default, `tzdata`, and the post-create block; `pre` proves the image is correct with `--skip-post-create`; `up`, `smoke`, and `idempotent` prove the reconciled runtime state. The offset assertions use fixed UTC instants in July and January, so they exercise daylight saving rules without depending on the current date.
 
-The tests use Python 3 on the host for JSON parsing and the PTY paste test, and Python 3 plus OpenSSL for the GitHub App token tests. They target Linux, macOS, or WSL. Set `SMOKE_ROOT` to move the disposable copy, `REPO` to test another checkout, or `CID` to target an existing container.
+The tests use Python 3 on the host for JSON parsing and the PTY paste test, and Python 3 plus OpenSSL for the GitHub App token tests. They target Linux, macOS, or WSL. The focused smoke scripts need `openspec` 2.1.1 and `git` on PATH; the container modes still need Docker and the Dev Containers CLI. Set `SMOKE_ROOT` to move the disposable copy, `REPO` to test another checkout, or `CID` to target an existing container.
 
 ### Test modes
 
 | Mode | What it does |
 | --- | --- |
 | `guard` | Verifies destructive-operation guards reject unsafe paths and volume prefixes |
-| `static` | Validates JSON, feature lock, environment, mounts, Dockerfile, and shell syntax |
+| `static` | Validates JSON, feature lock, environment, mounts, Dockerfile, and shell syntax, then runs the focused smoke scripts `test/agents-smoke.sh`, `test/skills-smoke.sh`, `test/openspec-smoke.sh`, `test/openspec-workflow-smoke.sh`, and `test/docs-smoke.sh`; requires `openspec` 2.1.1 and `git` on PATH |
 | `app-token` | Runs the host-side GitHub App token tests; no container or real GitHub API needed |
 | `build` | Runs `static`, then builds the image and Dev Container Features |
 | `pre` | Starts the container with `--skip-post-create` and checks base tooling |
@@ -501,6 +751,8 @@ CID=<container-id> test/devcontainer-smoke.sh paste-real
 
 > [!NOTE]
 > `smoke-real` requires `TZ` in the container environment. Containers created before the timezone change have no `ENV TZ` and fail the new `env: TZ` check until they are recreated.
+>
+> New-format containers also need `/workspace/repos` and `/worktrees` as a symlink to it; recreate older containers so `post-create.sh` can apply both. The local `repo clone`/`repo worktree` exercise uses the hermetic bare remote created in the disposable copy, so it runs only in the `prepare_copy` modes and is skipped for `smoke-real`.
 
 ## Troubleshooting
 
@@ -553,7 +805,7 @@ If you need a project config for read-only commands and are not using kind, you 
 
 ### Host secret mounts are empty or are directories
 
-Create the GitHub directory and `.env` files on the host before the first launch (see [Optional: host secrets](#optional-host-secrets)). The GitHub source is a directory mount; if it is missing, add `.env` and `app.pem` and restart the container. The Brave source is a single file; if Docker created a directory at `~/.devcontainer/brave/.env`, remove it and create the file before starting the container again.
+Create the GitHub directory and `.env` file on the host before the first launch (see [Optional: host secrets](#optional-host-secrets)). The GitHub source is a directory mount; if it is missing, add `.env` and `app.pem` and restart the container. The legacy `~/.devcontainer/brave/.env` file is no longer mounted; MCP hosts use `~/.devcontainer/opencode/secrets/brave_api_key`. Remove the old file after you confirm the overlay secret works.
 
 ### `gh-app-token` reports missing configuration
 
@@ -583,7 +835,7 @@ The post-create `ghcr.io` login is intentionally PAT-backed; installation tokens
 
 `starship.toml` uses Nerd Font glyphs. Install a [Nerd Font](https://www.nerdfonts.com/) and select it in your terminal.
 
-### Permission errors on `.local`, `.config`, or `/worktrees`
+### Permission errors on `.local`, `.config`, or `/workspace/repos`
 
 Re-run the post-create script inside the container as the `developer` user:
 

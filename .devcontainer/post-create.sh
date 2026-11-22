@@ -2,7 +2,6 @@
 set -euo pipefail
 
 GITHUB_ENV_FILE="$HOME/.dc/github/.env"
-BRAVE_ENV_FILE="$HOME/.dc/brave/.env"
 DEV_USER="${SUDO_USER:-$(id -un)}"
 
 # --- timezone ---
@@ -57,8 +56,8 @@ if [ "$(cat /etc/timezone 2>/dev/null || true)" != "$TZ" ]; then
 fi
 
 # Read the GitHub token in a subshell so the rest of the script's child
-# processes do not inherit it. The .bashrc blocks further down load the env
-# files for future interactive shells.
+# processes do not inherit it. The .bashrc block further down loads the env
+# file for future interactive shells.
 github_token=""
 if [ -f "$GITHUB_ENV_FILE" ]; then
   echo "Loading GitHub env ($GITHUB_ENV_FILE)..."
@@ -85,7 +84,89 @@ done
 # Repair ownership for existing volumes. Fresh volumes inherit developer
 # ownership from the pre-created directories in the Dockerfile. Chown the
 # parent directories too so tools can create new files under them.
-sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube" /worktrees
+sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"
+
+# --- multi-repo workspace ---
+# Clones live in the bind-mounted workspace so they persist without a named
+# volume. /worktrees is a compatibility symlink.
+echo "Configuring multi-repo workspace..."
+mkdir -p /workspace/repos
+if [ -L /worktrees ]; then
+  if [ "$(readlink /worktrees)" != "/workspace/repos" ]; then
+    sudo -n rm -f /worktrees
+    sudo -n ln -s /workspace/repos /worktrees
+  fi
+elif mountpoint -q /worktrees 2>/dev/null; then
+  echo "WARNING: /worktrees is an old volume mountpoint. Move its contents to" \
+    "/workspace/repos, remove the worktrees volume from devcontainer.json, and" \
+    "recreate the container. Then run 'git worktree repair' in each clone." >&2
+elif [ -d /worktrees ]; then
+  if [ -z "$(ls -A /worktrees 2>/dev/null)" ]; then
+    sudo -n rmdir /worktrees
+    sudo -n ln -s /workspace/repos /worktrees
+  else
+    echo "WARNING: /worktrees is a non-empty directory. Move its contents to" \
+      "/workspace/repos and recreate the container. Then run 'git worktree repair'" \
+      "in each clone; /worktrees was left untouched." >&2
+  fi
+else
+  sudo -n ln -s /workspace/repos /worktrees
+fi
+
+# --- opencode host secrets ---
+# The host overlay references secrets as {file:/etc/opencode/...}. Validate
+# those references before OpenCode starts; never print the file contents.
+while IFS= read -r secret; do
+  if [ ! -f "$secret" ]; then
+    echo "Missing host secret: $secret" >&2
+    exit 1
+  fi
+  if [ ! -r "$secret" ]; then
+    echo "Unreadable host secret: $secret" >&2
+    exit 1
+  fi
+  if [ ! -s "$secret" ]; then
+    echo "Empty host secret: $secret" >&2
+    exit 1
+  fi
+done < <(
+  find /etc/opencode -type f \( -name opencode.json -o -name opencode.jsonc \) -print0 2>/dev/null |
+    xargs -0 -r grep -hoE '\{file:/etc/opencode/[^}]+\}' 2>/dev/null |
+    sed -e 's/^{file://' -e 's/}$//' |
+    sort -u
+)
+
+# --- opencode control plane ---
+OC_SRC="/workspace/.opencode"
+if [ -d "$OC_SRC" ]; then
+  mkdir -p "$HOME/.config/opencode/agents" "$HOME/.config/opencode/skills"
+  if [ ! -e "$HOME/.config/opencode/opencode.json" ] || [ -L "$HOME/.config/opencode/opencode.json" ]; then
+    ln -sfn "$OC_SRC/opencode.global.json" "$HOME/.config/opencode/opencode.json"
+  fi
+  for src in "$OC_SRC"/agents/*.md; do
+    [ -e "$src" ] || continue
+    dest="$HOME/.config/opencode/agents/$(basename "$src")"
+    if [ ! -e "$dest" ] || [ -L "$dest" ]; then
+      ln -sfn "$src" "$dest"
+    fi
+  done
+  for src in "$OC_SRC"/skills/*; do
+    [ -d "$src" ] || continue
+    dest="$HOME/.config/opencode/skills/$(basename "$src")"
+    if [ ! -e "$dest" ] || [ -L "$dest" ]; then
+      ln -sfn "$src" "$dest"
+    fi
+  done
+  # Remove stale links that point into the control plane but whose source is gone.
+  for link in "$HOME/.config/opencode/agents"/* "$HOME/.config/opencode/skills"/*; do
+    [ -L "$link" ] || continue
+    case "$(readlink "$link")" in
+      "$OC_SRC"/*)
+        [ -e "$link" ] || rm -f "$link"
+        ;;
+    esac
+  done
+fi
 
 echo "Installing GitHub App helper commands..."
 for helper in gh-app-token gh-app; do
@@ -94,6 +175,144 @@ for helper in gh-app-token gh-app; do
     ln -sfn "$src" "$HOME/.local/bin/$helper"
   fi
 done
+echo "Installing repo helper command..."
+src="/workspace/.devcontainer/bin/repo"
+if [ -x "$src" ]; then
+  ln -sfn "$src" "$HOME/.local/bin/repo"
+fi
+
+# --- openspec ---
+# Node is provided by the devcontainer Node feature, not the Dockerfile build
+# stage, so install the pinned CLI here. Re-running post-create must not
+# reinstall an already-correct version.
+
+# Compare dotted version strings without relying on GNU sort -V. A pre-release
+# suffix sorts before its release, so 22.20.0-rc.1 is not >= 22.20.0. Splitting
+# on IFS keeps the body free of command substitution and redirections so the
+# smoke test can evaluate it safely.
+version_ge() {
+  local have="${1:-}" want="${2:-}"
+  have="${have#v}"
+  want="${want#v}"
+  local have_release="${have%%-*}"
+  local want_release="${want%%-*}"
+  local have_suffix=""
+  if [ "$have" != "$have_release" ]
+  then
+    have_suffix="${have#*-}"
+  fi
+  local old_ifs="$IFS"
+  IFS='.'
+  set -- $have_release
+  local h1="${1:-0}" h2="${2:-0}" h3="${3:-0}"
+  set -- $want_release
+  local w1="${1:-0}" w2="${2:-0}" w3="${3:-0}"
+  IFS="$old_ifs"
+  local part
+  for part in "$h1" "$h2" "$h3" "$w1" "$w2" "$w3"
+  do
+    if [ -z "$part" ]
+    then
+      return 1
+    fi
+    if [ -n "${part//[0-9]/}" ]
+    then
+      return 1
+    fi
+  done
+  if [ "$h1" -gt "$w1" ]
+  then
+    return 0
+  fi
+  if [ "$h1" -lt "$w1" ]
+  then
+    return 1
+  fi
+  if [ "$h2" -gt "$w2" ]
+  then
+    return 0
+  fi
+  if [ "$h2" -lt "$w2" ]
+  then
+    return 1
+  fi
+  if [ "$h3" -gt "$w3" ]
+  then
+    return 0
+  fi
+  if [ "$h3" -lt "$w3" ]
+  then
+    return 1
+  fi
+  if [ -n "$have_suffix" ]
+  then
+    return 1
+  fi
+  return 0
+}
+
+# Pure predicates: the caller passes the observed version, so the file stays
+# free of command substitution and the smoke test can evaluate these bodies.
+require_node_version() {
+  local required="22.20.0" actual="${1:-}"
+  actual="${actual#v}"
+  if [ -z "$actual" ]
+  then
+    return 1
+  fi
+  version_ge "$actual" "$required"
+}
+
+require_openspec_version() {
+  local required="2.1.1" actual="${1:-}"
+  if [ -z "$actual" ]
+  then
+    return 1
+  fi
+  if [ "$actual" != "${actual##* }" ]
+  then
+    actual="${actual##* }"
+  fi
+  [ "$actual" = "$required" ]
+}
+
+echo "Configuring OpenSpec 2.1.1..."
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js is not installed; OpenSpec 2.1.1 requires Node.js 22.20.0 or newer" >&2
+  exit 1
+fi
+node_version="$(node --version 2>/dev/null || true)"
+if ! require_node_version "$node_version"; then
+  echo "Node.js ${node_version:-unknown} is too old; OpenSpec 2.1.1 requires Node.js 22.20.0 or newer" >&2
+  exit 1
+fi
+if ! command -v openspec >/dev/null 2>&1 ||
+  [ "$(openspec --version 2>/dev/null |
+       grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" != "2.1.1" ]; then
+  echo "Installing OpenSpec 2.1.1..."
+  npm install -g --ignore-scripts --no-audit --no-fund @fission-ai/openspec@2.1.1
+fi
+echo "Verifying OpenSpec..."
+openspec_output="$(openspec --version 2>&1 || true)"
+openspec_version="$(printf '%s\n' "$openspec_output" |
+  grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+if ! require_openspec_version "$openspec_version"; then
+  echo "OpenSpec version mismatch: expected 2.1.1, got '$openspec_output'" >&2
+  exit 1
+fi
+openspec --version
+
+# OpenSpec enables anonymous telemetry by default. containerEnv sets
+# OPENSPEC_TELEMETRY=0 and DO_NOT_TRACK=1 for every shell, and this persists the
+# config key so the setting holds without the environment. Fail loudly if the
+# pinned CLI ignores it.
+echo "Disabling OpenSpec telemetry..."
+openspec config set telemetry.enabled false
+telemetry_enabled="$(openspec config get telemetry.enabled 2>/dev/null || true)"
+if [ "$telemetry_enabled" != "false" ]; then
+  echo "OpenSpec telemetry is still enabled (telemetry.enabled='$telemetry_enabled')" >&2
+  exit 1
+fi
 
 # Kubernetes client-go locks every file listed in KUBECONFIG. On macOS
 # VirtioFS bind mounts the lock file can be created with mode 000, which makes
@@ -130,19 +349,6 @@ GITHUB_ENV_FILE="$GITHUB_ENV_FILE"
 if [ -f "$GITHUB_ENV_FILE" ]; then
   set -a
   . "$GITHUB_ENV_FILE"
-  set +a
-fi
-EOF
-fi
-
-if ! grep -qF '# --- brave env ---' "$HOME/.bashrc" 2>/dev/null; then
-  cat >>"$HOME/.bashrc" <<EOF
-
-# --- brave env ---
-BRAVE_ENV_FILE="$BRAVE_ENV_FILE"
-if [ -f "$BRAVE_ENV_FILE" ]; then
-  set -a
-  . "$BRAVE_ENV_FILE"
   set +a
 fi
 EOF

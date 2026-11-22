@@ -18,6 +18,8 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "remoteUser": "developer",
+  "updateRemoteUserUID": true,
+  "initializeCommand": "bash .devcontainer/host-init.sh",
   "mounts": [
     "type=volume,source=opencode-share,target=/home/developer/.local/share/opencode",
     "type=volume,source=opencode-state,target=/home/developer/.local/state/opencode",
@@ -26,9 +28,8 @@
     "type=volume,source=nvim-state,target=/home/developer/.local/state/nvim",
     "type=volume,source=nvim-share,target=/home/developer/.local/share/nvim",
     "type=volume,source=kubeconfig,target=/home/developer/.kube",
-    "type=volume,source=worktrees,target=/worktrees",
     "type=bind,src=${localEnv:HOME}/.devcontainer/github,dst=/home/developer/.dc/github,bind-create-src,ro",
-    "type=bind,src=${localEnv:HOME}/.devcontainer/brave/.env,dst=/home/developer/.dc/brave/.env,bind-create-src,ro"
+    "type=bind,src=${localEnv:HOME}/.devcontainer/opencode,dst=/etc/opencode,ro"
   ],
   "containerEnv": {
     "LANG": "en_US.UTF-8",
@@ -36,7 +37,9 @@
     "TZ": "${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}",
     "STARSHIP_CONFIG": "/workspace/.devcontainer/starship.toml",
     "EDITOR": "nvim",
-    "VISUAL": "nvim"
+    "VISUAL": "nvim",
+    "OPENSPEC_TELEMETRY": "0",
+    "DO_NOT_TRACK": "1"
   },
   "remoteEnv": {
     "PATH": "${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin",
