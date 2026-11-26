@@ -153,155 +153,65 @@ else
   bad "openspec validate --strict (approved change not found)"
 fi
 
-# 6. post-create.sh installs the pinned version idempotently.
+# 6. post-create.sh does not install OpenSpec: the CLI comes from the image.
 post_create=".devcontainer/post-create.sh"
 if [ ! -f "$post_create" ]; then
   bad "$post_create exists"
 else
-  if grep -qF '@fission-ai/openspec@2.1.1' "$post_create"; then
-    pass "post-create.sh pins @fission-ai/openspec@2.1.1"
+  if grep -qF '@fission-ai/openspec' "$post_create"; then
+    bad "post-create.sh does not install OpenSpec from npm (found @fission-ai/openspec)"
   else
-    bad "post-create.sh pins @fission-ai/openspec@2.1.1"
+    pass "post-create.sh does not install OpenSpec from npm"
   fi
-  if grep -qE 'command -v openspec.*|openspec --version' "$post_create"; then
-    pass "post-create.sh has an idempotence guard for openspec"
+  npm_install_lines="$(grep -nE \
+    '(^|[^[:alnum:]_./-])npm[[:space:]]+install([^[:alnum:]_-]|$)' \
+    "$post_create" || true)"
+  if [ -z "$npm_install_lines" ]; then
+    pass "post-create.sh does not run npm install"
   else
-    bad "post-create.sh has an idempotence guard for openspec"
+    bad "post-create.sh does not run npm install (found: $npm_install_lines)"
   fi
-  npm_install_line="$(grep -E '^[[:space:]]*npm install -g ' "$post_create" |
-    head -n1 || true)"
-  for flag in --ignore-scripts --no-audit --no-fund; do
-    case "$npm_install_line" in
-      *"$flag"*) pass "post-create.sh global npm install uses $flag" ;;
-      *) bad "post-create.sh global npm install uses $flag (line: $npm_install_line)" ;;
-    esac
+  if grep -qF 'openspec --version' "$post_create"; then
+    pass "post-create.sh verifies the image-provided openspec --version"
+  else
+    bad "post-create.sh verifies the image-provided openspec --version"
+  fi
+  if grep -qF '!= "2.1.1"' "$post_create"; then
+    pass "post-create.sh fails unless the OpenSpec version is exactly 2.1.1"
+  else
+    bad "post-create.sh fails unless the OpenSpec version is exactly 2.1.1"
+  fi
+  if grep -qF 'OpenSpec version mismatch: expected 2.1.1' "$post_create"; then
+    pass "post-create.sh reports an explicit OpenSpec mismatch"
+  else
+    bad "post-create.sh reports an explicit OpenSpec mismatch"
+  fi
+fi
+
+# 7. post-create.sh no longer carries the deleted Node/OpenSpec shell guards.
+if [ ! -f "$post_create" ]; then
+  bad "$post_create exists for the guard removal"
+else
+  for guard in version_ge require_node_version require_openspec_version; do
+    if grep -qF "$guard" "$post_create"; then
+      bad "post-create.sh does not define or call $guard"
+    else
+      pass "post-create.sh does not define or call $guard"
+    fi
   done
-fi
-
-# 7. post-create.sh enforces the toolchain versions OpenSpec 2.1.1 requires.
-extract_function() {
-  local name="$1"
-  awk -v fn="$name" '
-    $0 ~ ("^" fn "\\(\\) \\{") { capture = 1 }
-    capture { print }
-    capture && $0 == "}" { exit }
-  ' "$post_create"
-}
-
-# SEC-6: never eval extracted text that can run another command. A version
-# predicate needs comparisons and conditions only; command substitution,
-# redirections, pipelines, list separators, and dynamic-code keywords are
-# rejected before eval.
-snippet_is_safe() {
-  case "$1" in
-    *'$('*|*'`'*|*eval*|*source*|*'|'*|*'&'*|*'>'*|*'<'*|*';'*)
-      return 1
-      ;;
-  esac
-  return 0
-}
-
-unsafe_samples=(
-  'evil() { id $(uname); }'
-  'evil() { id `uname`; }'
-  'evil() { eval "$payload"; }'
-  'evil() { source /tmp/payload; }'
-  'evil() { id | sh; }'
-  'evil() { id & }'
-  'evil() { id > /tmp/out; }'
-  'evil() { id < /tmp/in; }'
-  'evil() { id; id; }'
-)
-for sample in "${unsafe_samples[@]}"; do
-  if snippet_is_safe "$sample"; then
-    bad "eval guard rejects unsafe snippet: $sample"
+  for node_check in 'command -v node' 'node --version'; do
+    if grep -qF "$node_check" "$post_create"; then
+      bad "post-create.sh does not check Node ($node_check)"
+    else
+      pass "post-create.sh does not check Node ($node_check)"
+    fi
+  done
+  if grep -qF 'openspec --version' "$post_create" &&
+    grep -qF '!= "2.1.1"' "$post_create"; then
+    pass "post-create.sh keeps the strict 2.1.1 verification"
   else
-    pass "eval guard rejects unsafe snippet: $sample"
+    bad "post-create.sh keeps the strict 2.1.1 verification"
   fi
-done
-safe_sample='evil() {
-  return 0
-}'
-if snippet_is_safe "$safe_sample"; then
-  pass "eval guard accepts a plain predicate"
-else
-  bad "eval guard accepts a plain predicate"
-fi
-
-version_ge_src="$(extract_function version_ge)"
-node_guard_src="$(extract_function require_node_version)"
-openspec_guard_src="$(extract_function require_openspec_version)"
-
-eval_problem=""
-for snippet_name in version_ge require_node_version require_openspec_version; do
-  case "$snippet_name" in
-    version_ge) snippet_src="$version_ge_src" ;;
-    require_node_version) snippet_src="$node_guard_src" ;;
-    require_openspec_version) snippet_src="$openspec_guard_src" ;;
-  esac
-  [ -n "$snippet_src" ] || continue
-  if ! snippet_is_safe "$snippet_src"; then
-    eval_problem="$eval_problem $snippet_name"
-  fi
-done
-if [ -z "$eval_problem" ]; then
-  pass "extracted guard snippets are safe to eval"
-else
-  bad "extracted guard snippets are safe to eval (unsafe:$eval_problem)"
-fi
-
-if [ -z "$version_ge_src" ] || [ -z "$node_guard_src" ]; then
-  bad "post-create.sh defines a Node.js version guard"
-elif [ -n "$eval_problem" ]; then
-  bad "post-create.sh rejects Node.js below 22.20.0 (unsafe snippet, not evaluated)"
-elif ! (
-  eval "$version_ge_src"
-  eval "$node_guard_src"
-  node_version_input="v22.19.9"
-  if require_node_version "$node_version_input"; then exit 1; fi
-  node_version_input="v22.20.0"
-  require_node_version "$node_version_input" || exit 1
-  node_version_input="v26.13.1"
-  require_node_version "$node_version_input" || exit 1
-  node_version_input="v22.20.0-rc.1"
-  if require_node_version "$node_version_input"; then exit 1; fi
-  node_version_input=""
-  if require_node_version "$node_version_input"; then exit 1; fi
-); then
-  bad "post-create.sh rejects Node.js below 22.20.0"
-else
-  pass "post-create.sh rejects Node.js below 22.20.0"
-fi
-
-node_guard_calls="$(grep -cE '^[^#]*require_node_version' "$post_create" || true)"
-if [ "$node_guard_calls" -ge 2 ]; then
-  pass "post-create.sh invokes the Node.js version guard"
-else
-  bad "post-create.sh invokes the Node.js version guard (found $node_guard_calls references)"
-fi
-
-if [ -z "$openspec_guard_src" ]; then
-  bad "post-create.sh defines an OpenSpec version assertion"
-elif [ -n "$eval_problem" ]; then
-  bad "post-create.sh rejects an OpenSpec version other than 2.1.1 (unsafe snippet, not evaluated)"
-elif ! (
-  eval "$openspec_guard_src"
-  if require_openspec_version 2.0.0; then exit 1; fi
-  require_openspec_version 2.1.1 || exit 1
-  require_openspec_version "openspec 2.1.1" || exit 1
-  if require_openspec_version 2.1.10; then exit 1; fi
-  if require_openspec_version ""; then exit 1; fi
-); then
-  bad "post-create.sh rejects an OpenSpec version other than 2.1.1"
-else
-  pass "post-create.sh rejects an OpenSpec version other than 2.1.1"
-fi
-
-openspec_guard_calls="$(grep -cE '^[^#]*require_openspec_version' "$post_create" || true)"
-if [ "$openspec_guard_calls" -ge 2 ]; then
-  pass "post-create.sh invokes the OpenSpec version assertion"
-else
-  bad "post-create.sh invokes the OpenSpec version assertion (found $openspec_guard_calls references)"
 fi
 
 # 8. OpenSpec telemetry is disabled in the container and by the toolchain.
