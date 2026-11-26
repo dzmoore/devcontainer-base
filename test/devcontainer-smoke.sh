@@ -1198,6 +1198,9 @@ for startup_path, target in startup_targets.items():
           f'{startup_path} must contain exactly one command -v nvm guard')
     check(len(re.findall(r'\.\s+"\$NVM_DIR/nvm\.sh"\s+--no-use', block)) == 1,
           f'{startup_path} must source nvm.sh --no-use exactly once')
+    check(len(re.findall(r'\.\s+"\$NVM_DIR/nvm\.sh"', block)) == 1,
+          f'{startup_path} must contain exactly one nvm.sh source line, '
+          f'always with --no-use')
     guard_pos = block.find('command -v nvm >/dev/null 2>&1')
     source_pos = block.find('. "$NVM_DIR/nvm.sh" --no-use')
     check(guard_pos != -1 and source_pos != -1 and guard_pos < source_pos,
