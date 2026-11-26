@@ -111,11 +111,14 @@ Because the `devcontainer` CLI is unavailable, the runtime evidence comes from:
 docker build -t devcontainer-base:nvm-test .devcontainer
 ```
 
-Then, inside `docker run --rm` with a clean environment:
+Then, inside `docker run --rm`:
 
-- `env -i HOME=/home/developer PATH=/usr/local/bin:/usr/bin:/bin sh -c 'node --version && npm --version && npx --version'`
-- the same for `bash -c`, `sh -lc`, and `bash -lc`;
-- `bash -ic 'nvm --version' </dev/null`;
+- non-interactive shells use the image environment and must find the pinned Node:
+  `sh -c 'node --version && npm --version && npx --version'` and the same for `bash -c`;
+- login shells must survive a clean environment that does not inherit the image `PATH`, proving `/etc/profile.d/00-nvm.sh`:
+  `env -i HOME=/home/developer PATH=/usr/local/bin:/usr/bin:/bin sh -lc 'node --version'` and the same for `bash -lc`, plus `nvm --version`;
+- interactive bash must source nvm for the command itself:
+  `bash -ic 'nvm --version' </dev/null`;
 - exact `node --version` equal to the Dockerfile `NODE_VERSION` and `nvm --version` equal to `NVM_VERSION`;
 - `npm prefix -g` and `npm root -g` resolve under `$NVM_DIR/versions/node/v26.13.1`;
 - `npm install -g` of a locally packed tarball succeeds without sudo as `developer`;
