@@ -166,8 +166,11 @@ else
   bad "Node migration note documents rollback"
 fi
 
-# 5c. The README path table links the Node/nvm migration note.
-if grep -qF '| `docs/migrations/2026-11-21-node-nvm.md` |' "$readme"; then
+# 5c. The README path table links the Node/nvm migration note. Scope the grep
+#     to the `### Files` section so a row elsewhere cannot satisfy it.
+readme_files_section="$(sed -n '/^### Files$/,/^### /p' "$readme")"
+if printf '%s\n' "$readme_files_section" |
+   grep -qF '| `docs/migrations/2026-11-21-node-nvm.md` |'; then
   pass "README.md path table names docs/migrations/2026-11-21-node-nvm.md"
 else
   bad "README.md path table names docs/migrations/2026-11-21-node-nvm.md"
