@@ -39,12 +39,48 @@ fi
 pass "README.md exists"
 
 # 1. The README describes the OpenSpec flow and the pinned version.
-for needle in 'openspec init' 'OpenSpec 2.1.1' 'openspec archive' '22.20'; do
+for needle in 'openspec init' 'OpenSpec 2.1.1' 'openspec archive' '26.13.1'; do
   contains "$readme" "$needle" "README.md contains $needle"
 done
 contains "$readme" \
   'openspec init --tools opencode --scope project --profile core' \
   "README.md contains the full openspec init command"
+
+# 1b. The README attributes the Node toolchain to the image: pinned nvm and
+#     Node, the per-user nvm directory, the no-source-fallback guard, the
+#     standalone OpenSpec binary, and the pnpm replacement.
+for needle in \
+  '0.41.0' \
+  'nvm' \
+  '/home/developer/.nvm' \
+  'NVM_NO_SOURCE_FALLBACK' \
+  'standalone' \
+  '/usr/local/bin/openspec' \
+  'npm install -g pnpm'; do
+  contains "$readme" "$needle" "README.md contains $needle"
+done
+
+# 1c. The README still lists the nine remaining Dev Container Features.
+for needle in \
+  'Go' \
+  'kubectx' \
+  'fzf' \
+  'Bun' \
+  'uv' \
+  'kind' \
+  'Docker-in-Docker' \
+  'Python' \
+  'GitHub CLI'; do
+  contains "$readme" "$needle" "README.md names the $needle feature"
+done
+
+# 1d. The stale Node-feature and npm-install claims are gone from the README.
+for needle in \
+  'Language runtime versions are provided by Dev Container Features' \
+  '@fission-ai/openspec@2.1.1' \
+  'OpenSpec requires Node.js 22.20'; do
+  absent "$readme" "$needle" "README.md does not contain $needle"
+done
 
 # 2. The vendored Superpowers runtime is gone from the README.
 for needle in \
