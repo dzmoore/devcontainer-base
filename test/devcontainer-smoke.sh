@@ -317,6 +317,37 @@ check(features == locked, f'feature/lock mismatch: missing={sorted(features-lock
 feature = 'ghcr.io/devcontainers/features/kubectl-helm-minikube:1'
 check(feature not in features, f'{feature} must be absent from devcontainer.json features')
 check(feature not in locked, f'{feature} must be absent from devcontainer-lock.json features')
+
+# The image provides Node.js through nvm, so the Node feature must stay removed.
+node_feature = 'ghcr.io/devcontainers/features/node:1'
+check(node_feature not in features,
+      f'{node_feature} must be absent from devcontainer.json features')
+check(node_feature not in locked,
+      f'{node_feature} must be absent from devcontainer-lock.json features')
+
+expected_features = {
+    'ghcr.io/devcontainers/features/go:1': {},
+    'ghcr.io/devcontainers-extra/features/kubectx-kubens:1': {},
+    'ghcr.io/devcontainers-extra/features/fzf:1': {},
+    'ghcr.io/devcontainers-extra/features/bun:1': {},
+    'ghcr.io/devcontainers-extra/features/uv:1': {},
+    'ghcr.io/devcontainers-extra/features/kind:1': {},
+    'ghcr.io/devcontainers/features/docker-in-docker:2': {'moby': False},
+    'ghcr.io/devcontainers/features/python:1': {},
+    'ghcr.io/devcontainers/features/github-cli:1': {},
+}
+actual_features = dc.get('features', {})
+check(features == set(expected_features),
+      'devcontainer.json must contain exactly the nine remaining features: '
+      f'missing={sorted(set(expected_features) - features)} '
+      f'extra={sorted(features - set(expected_features))}')
+for name, options in expected_features.items():
+    check(actual_features.get(name) == options,
+          f'{name} options must be exactly {options}, got {actual_features.get(name)!r}')
+check(locked == set(expected_features),
+      'devcontainer-lock.json must contain exactly the nine remaining features: '
+      f'missing={sorted(set(expected_features) - locked)} '
+      f'extra={sorted(locked - set(expected_features))}')
 check(dc.get('remoteUser') == 'developer', 'remoteUser must be developer')
 check(dc.get('postCreateCommand') == 'bash .devcontainer/post-create.sh', 'postCreateCommand must run post-create.sh')
 check(dc.get('waitFor') == 'postCreateCommand', 'waitFor must be postCreateCommand')
@@ -1043,6 +1074,10 @@ check('ENV PATH="$NVM_DIR/current/bin:$PATH"' in dockerfile,
       'Dockerfile must put $NVM_DIR/current/bin on PATH')
 for cmd in ('node --version', 'npm --version', 'npx --version'):
     check(cmd in dockerfile, f'Dockerfile must print {cmd} after the nvm install')
+check(re.search(r'\bnpm\s+install\b', dockerfile) is None,
+      'Dockerfile must not npm install packages into the image')
+check(re.search(r'\bpnpm\s+install\b', dockerfile) is None,
+      'Dockerfile must not pnpm install packages into the image')
 
 shell_pos = dockerfile.find('SHELL ["/bin/bash", "-c"]')
 home_pos = dockerfile.find('ENV HOME=')

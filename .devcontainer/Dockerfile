@@ -71,8 +71,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user to avoid running everything as root. The shell must be
-# bash: several Dev Container features run `su <user> -c` snippets that use bash
-# builtins (for example the Node feature's `source nvm.sh`).
+# bash: the user-level nvm install and the remaining lifecycle snippets rely on
+# bash builtins, and `nvm.sh` is bash-only.
 RUN groupadd --gid $USER_GID $USERNAME \
   && useradd --uid $USER_UID --gid $USER_GID -m --shell /bin/bash $USERNAME \
   # Add sudo support for the non-root user
