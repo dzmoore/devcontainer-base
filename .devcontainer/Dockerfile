@@ -37,6 +37,8 @@ ARG HELM_SHA256_ARM64=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad169
 # is needed for SSH git remotes; ripgrep avoids OpenCode's arm64 fallback path;
 # less backs Glow's --pager mode.
 # python3/python3-venv/pipx are retained for general Python tooling.
+# make/gcc/g++/libc6-dev keep the node-gyp native-addon toolchain, including the
+# C library headers, after the Node feature is removed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   git \
   curl \
@@ -56,6 +58,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   python3 \
   python3-venv \
   pipx \
+  make \
+  gcc \
+  g++ \
+  libc6-dev \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 

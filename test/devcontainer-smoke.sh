@@ -930,7 +930,8 @@ apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*'
 check(apt_block is not None, 'Dockerfile apt package block not found')
 if apt_block:
     for pkg in ('libatomic1', 'openssh-client', 'openssl', 'firefox-esr', 'ripgrep', 'less',
-                'locales', 'unzip', 'zip', 'bash-completion', 'python3', 'python3-venv', 'pipx'):
+                'locales', 'unzip', 'zip', 'bash-completion', 'python3', 'python3-venv', 'pipx',
+                'make', 'gcc', 'g++', 'libc6-dev'):
         check(re.search(rf'(?m)^\s*{re.escape(pkg)}\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
               f'Dockerfile apt package block must install {pkg}')
 check(re.search(r'^ENV LANG=en_US\.UTF-8', dockerfile, re.M) is not None,
@@ -1066,25 +1067,52 @@ if apt_block:
               f'Dockerfile apt block must not install Debian {debian_pkg}')
 
 # --- nvm login and interactive shells ---
-for startup_path in ('/etc/profile.d/00-nvm.sh', '/etc/bash.bashrc',
-                     '/home/developer/.bashrc'):
+startup_targets = {
+    '/etc/profile.d/00-nvm.sh': r' > /etc/profile\.d/00-nvm\.sh;',
+    '/etc/bash.bashrc': r' >> /etc/bash\.bashrc;',
+    '/home/developer/.bashrc': r' >> /home/developer/\.bashrc\b',
+}
+
+
+def startup_block(target):
+    match = re.search(
+        r"printf '%s\\n' ((?:(?!printf '%s\\n').)*?)" + target,
+        dockerfile, re.S)
+    if match is None:
+        return None
+    return '\n'.join(re.findall(r"'([^']*)'", match.group(1)))
+
+
+startup_blocks = {}
+for startup_path, target in startup_targets.items():
     check(startup_path in dockerfile,
           f'Dockerfile must write the nvm startup file {startup_path}')
-check("'# --- nvm ---'" in dockerfile,
-      'Dockerfile startup files must include the # --- nvm --- marker')
-check(dockerfile.count('export NVM_DIR="/home/developer/.nvm"') >= 3,
-      'Dockerfile must export the developer NVM_DIR in profile.d and both bashrc files')
-check('BASH_VERSION' in dockerfile,
-      'profile.d nvm source must be guarded by BASH_VERSION')
-check(dockerfile.count('command -v nvm >/dev/null 2>&1') >= 2,
-      'bashrc nvm blocks must be guarded with command -v nvm >/dev/null 2>&1')
-check('$NVM_DIR/current/bin' in dockerfile,
-      'profile.d must add $NVM_DIR/current/bin to PATH')
-startup_sources = re.findall(r'\.\s+"\$NVM_DIR/nvm\.sh"([^\n\\]*)', dockerfile)
-check(len(startup_sources) >= 4,
-      'Dockerfile must source nvm.sh in profile.d and both bashrc files')
-check(all('--no-use' in rest for rest in startup_sources),
-      'every nvm.sh source must use --no-use')
+    block = startup_block(target)
+    check(block is not None,
+          f'Dockerfile must write the {startup_path} block with printf')
+    if block is None:
+        continue
+    startup_blocks[startup_path] = block
+    check(block.count('# --- nvm ---') == 1,
+          f'{startup_path} must contain exactly one # --- nvm --- marker')
+    check(block.count('command -v nvm >/dev/null 2>&1') == 1,
+          f'{startup_path} must contain exactly one command -v nvm guard')
+    check(len(re.findall(r'\.\s+"\$NVM_DIR/nvm\.sh"\s+--no-use', block)) == 1,
+          f'{startup_path} must source nvm.sh --no-use exactly once')
+    guard_pos = block.find('command -v nvm >/dev/null 2>&1')
+    source_pos = block.find('. "$NVM_DIR/nvm.sh" --no-use')
+    check(guard_pos != -1 and source_pos != -1 and guard_pos < source_pos,
+          f'{startup_path} must guard the nvm.sh source before sourcing it')
+    check('export NVM_DIR="/home/developer/.nvm"' in block,
+          f'{startup_path} must export the developer NVM_DIR')
+
+profile_block = startup_blocks.get('/etc/profile.d/00-nvm.sh', '')
+check('export PATH="$NVM_DIR/current/bin:$PATH"' in profile_block,
+      'profile.d block must add $NVM_DIR/current/bin to PATH')
+profile_bash = profile_block.find('BASH_VERSION')
+profile_source = profile_block.find('. "$NVM_DIR/nvm.sh" --no-use')
+check(profile_bash != -1 and profile_source != -1 and profile_bash < profile_source,
+      'profile.d block must guard the nvm.sh source with BASH_VERSION before sourcing')
 check(remote_path == '${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin',
       'remoteEnv.PATH must stay exactly '
       '${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin')
