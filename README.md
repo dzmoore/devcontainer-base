@@ -24,7 +24,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 
 `devcontainer-base` is made for projects that need more than a single runtime, and for workflows that mix local containers, a Kubernetes cluster, and an AI coding agent in the same workspace. It is a good fit for platform, backend, and AI projects that want a consistent environment without maintaining a bespoke Dockerfile for every repository.
 
-- **Polyglot by default** - Node.js 26.13.1 through nvm 0.41.0, Bun, Python with uv, and Go are ready to use.
+- **Polyglot by default** — Node.js 26.13.1 through nvm 0.41.0, Bun, Python with uv, and Go are ready to use.
 - **Cloud-native tooling** — Docker-in-Docker, Compose, Buildx, kubectl, Helm, kind, and kubectx/kubens.
 - **AI-assisted workflow** — OpenCode, persistent tool state, and short-lived GitHub App installation tokens for `gh` and `git`.
 - **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, paste-safe terminal settings, and a configurable system timezone that defaults to US/Pacific.
@@ -236,7 +236,7 @@ If `/worktrees` is still an old volume mountpoint or a non-empty directory, `pos
 
 ### Change tool versions
 
-Bump the relevant `ARG` at the top of `.devcontainer/Dockerfile`, then rebuild. For kubectl, Helm, and OpenSpec, update the matching per-architecture `SHA256` digest ARGs in the same change. For nvm, change `NVM_VERSION` and `NVM_INSTALL_SHA256` together. A Node.js bump changes only `NODE_VERSION`. The build runs `nvm alias default` and `nvm use default`, so `$NVM_DIR/current` follows the new version. `NVM_NO_SOURCE_FALLBACK=1` fails the build instead of compiling Node from source.
+Bump the relevant `ARG` at the top of `.devcontainer/Dockerfile`, then rebuild. For kubectl, Helm, and OpenSpec, update the matching per-architecture `SHA256` digest ARGs in the same change. For nvm, change `NVM_VERSION` and `NVM_INSTALL_SHA256` together. A Node.js bump changes only `NODE_VERSION` among the build args. Also update the pinned `26.13.1` literals in `test/devcontainer-smoke.sh` and `test/docs-smoke.sh`, and every `26.13.1` mention in this README. The build runs `nvm alias default` and `nvm use default`, so `$NVM_DIR/current` follows the new version. `NVM_NO_SOURCE_FALLBACK=1` fails the build instead of compiling Node from source.
 
 ```bash
 devcontainer build --workspace-folder .
