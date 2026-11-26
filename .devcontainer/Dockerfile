@@ -23,6 +23,11 @@ ARG NVM_VERSION=v0.41.0
 ARG NODE_VERSION=26.13.1
 ARG NVM_INSTALL_SHA256=045932fe05f0d4247c946f2ec0ec4026dbfd8ce88a5f67ea28d8ea833227f48b
 
+# OpenSpec: https://github.com/Fission-AI/OpenSpec/releases/download/v2.1.1/SHA256SUMS
+ARG OPENSPEC_VERSION=v2.1.1
+ARG OPENSPEC_SHA256_AMD64=22f0c7c96cc14138becb42aa98e589050c94cda793cbefd7e7ac2d7dee78b6d5
+ARG OPENSPEC_SHA256_ARM64=b7ab16e4138e88df2d2ddc13e687bf20f6fe22751db68492d48e00d77b0183da
+
 # kubectl: https://dl.k8s.io/release/v1.37.2/bin/linux/{amd64,arm64}/kubectl.sha256
 # Helm:   https://get.helm.sh/helm-v4.3.1-linux-{amd64,arm64}.tar.gz.sha256sum
 ARG KUBECTL_VERSION=v1.37.2
@@ -199,6 +204,27 @@ RUN set -eu; \
     || { echo "Invalid TZ '$TZ': $resolved is not a TZif zone file" >&2; exit 1; }; \
   ln -snf "$zone" /etc/localtime; \
   printf '%s\n' "$TZ" > /etc/timezone
+
+# Install the pinned OpenSpec CLI from its official standalone release so it
+# does not depend on the nvm-managed Node.js. The per-architecture digest is
+# verified before extraction, and the version check suppresses telemetry so the
+# build does not emit an event or create root-owned config state.
+RUN set -eu; \
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) openspec_arch=x64; openspec_sha256="${OPENSPEC_SHA256_AMD64}" ;; \
+    arm64) openspec_arch=arm64; openspec_sha256="${OPENSPEC_SHA256_ARM64}" ;; \
+    *) echo "Unsupported architecture for OpenSpec: $arch" >&2; exit 1 ;; \
+  esac; \
+  openspec_asset="openspec-linux-${openspec_arch}.tar.gz"; \
+  tmp="$(mktemp -d)"; \
+  trap 'rm -rf "$tmp"' 0; \
+  curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+    -o "$tmp/$openspec_asset" "https://github.com/Fission-AI/OpenSpec/releases/download/${OPENSPEC_VERSION}/$openspec_asset"; \
+  printf '%s  %s\n' "$openspec_sha256" "$openspec_asset" | (cd "$tmp" && sha256sum --strict -c -); \
+  tar -xzf "$tmp/$openspec_asset" -C "$tmp" openspec; \
+  install -m 0755 "$tmp/openspec" /usr/local/bin/openspec; \
+  env OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec --version
 
 # Install nvm and Node.js as the developer user so global npm packages write
 # under $HOME without sudo. nvm.sh is bash-only, so switch the build shell

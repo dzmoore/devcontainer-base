@@ -1016,6 +1016,13 @@ check('NVM_NO_SOURCE_FALLBACK=1' in dockerfile,
       'Dockerfile must set NVM_NO_SOURCE_FALLBACK=1')
 check(re.search(r'NVM_NO_SOURCE_FALLBACK=1\s+nvm\s+install\s+"\$NODE_VERSION"', dockerfile) is not None,
       'Dockerfile must run NVM_NO_SOURCE_FALLBACK=1 nvm install "$NODE_VERSION"')
+nvm_install_source = re.search(
+    r'(?m)^\s*\.\s+"\$NVM_DIR/nvm\.sh"\s+--no-use[^\n]*\n'
+    r'\s*NVM_NO_SOURCE_FALLBACK=1\s+nvm\s+install',
+    dockerfile)
+check(nvm_install_source is not None,
+      'Dockerfile must source nvm.sh --no-use on the line before '
+      'NVM_NO_SOURCE_FALLBACK=1 nvm install')
 check(re.search(r'\.\s+"\$NVM_DIR/nvm\.sh"\s+--no-use', dockerfile) is not None,
       'Dockerfile must source nvm.sh --no-use')
 check(re.search(r'nvm\s+alias\s+default\s+"\$NODE_VERSION"', dockerfile) is not None,
@@ -1065,6 +1072,63 @@ if apt_block:
             rf'(?m)^\s*{debian_pkg}(?:[:=][^\s#\\]+)?\s*(?:#.*)?\\?\s*$',
             apt_block.group(0)) is None,
               f'Dockerfile apt block must not install Debian {debian_pkg}')
+
+# --- pinned OpenSpec standalone CLI ---
+openspec_version = re.search(r'^ARG OPENSPEC_VERSION=(\S+)\s*$', dockerfile, re.M)
+check(openspec_version is not None and openspec_version.group(1) == 'v2.1.1',
+      'Dockerfile must pin ARG OPENSPEC_VERSION=v2.1.1')
+openspec_digests = {
+    'OPENSPEC_SHA256_AMD64':
+        '22f0c7c96cc14138becb42aa98e589050c94cda793cbefd7e7ac2d7dee78b6d5',
+    'OPENSPEC_SHA256_ARM64':
+        'b7ab16e4138e88df2d2ddc13e687bf20f6fe22751db68492d48e00d77b0183da',
+}
+for arg, approved in openspec_digests.items():
+    digest = re.search(rf'^ARG {re.escape(arg)}=(\S+)\s*$', dockerfile, re.M)
+    check(digest is not None and digest.group(1) == approved,
+          f'Dockerfile must pin the approved ARG {arg} digest')
+    check(digest is not None and re.fullmatch(r'[0-9a-f]{64}', digest.group(1)) is not None,
+          f'Dockerfile {arg} must be 64-character lowercase hex')
+check('amd64) openspec_arch=x64' in dockerfile
+      and 'arm64) openspec_arch=arm64' in dockerfile,
+      'Dockerfile must map amd64/arm64 to the OpenSpec release architectures')
+check('Unsupported architecture for OpenSpec' in dockerfile,
+      'Dockerfile must reject unsupported architectures for OpenSpec')
+check('openspec-linux-${openspec_arch}.tar.gz' in dockerfile,
+      'Dockerfile must use the canonical OpenSpec asset name')
+check(re.search(
+    r'https://github\.com/Fission-AI/OpenSpec/releases/download/'
+    r'\$\{OPENSPEC_VERSION\}/\$openspec_asset', dockerfile) is not None,
+      'Dockerfile must download the OpenSpec tarball from the official '
+      'release URL with ${OPENSPEC_VERSION}')
+openspec_checksum = re.search(
+    r"printf '%s  %s\\n' \"\$openspec_sha256\" \"\$openspec_asset\""
+    r"\s*\|\s*\(cd \"\$tmp\" && sha256sum --strict -c -\)",
+    dockerfile)
+check(openspec_checksum is not None,
+      'Dockerfile must verify the OpenSpec tarball with '
+      'printf ... | sha256sum --strict -c -')
+check(re.search(
+    r'tar\s+-xzf\s+"\$tmp/\$openspec_asset"\s+-C\s+"\$tmp"\s+openspec\b',
+    dockerfile) is not None,
+      'Dockerfile must extract only openspec from the OpenSpec tarball')
+check(re.search(
+    r'install\s+-m\s+0755\s+"\$tmp/openspec"\s+/usr/local/bin/openspec',
+    dockerfile) is not None,
+      'Dockerfile must install openspec at mode 0755 to /usr/local/bin/openspec')
+check('env OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec --version' in dockerfile,
+      'Dockerfile must run the telemetry-suppressed openspec --version check')
+check('@fission-ai/openspec' not in dockerfile.lower(),
+      'Dockerfile must not install OpenSpec from npm')
+check(re.search(r'npm\s+install\s+(?:-g|--global)\b[^\n]*openspec', dockerfile,
+                re.I) is None,
+      'Dockerfile must not npm install OpenSpec')
+openspec_check_pos = dockerfile.find(
+    'env OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec --version')
+first_user_line = re.search(r'(?m)^USER \$USERNAME\s*$', dockerfile)
+check(openspec_check_pos != -1 and first_user_line is not None
+      and openspec_check_pos < first_user_line.start(),
+      'Dockerfile must install OpenSpec as root before USER $USERNAME')
 
 # --- nvm login and interactive shells ---
 startup_targets = {
