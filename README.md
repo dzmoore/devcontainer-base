@@ -219,6 +219,7 @@ If `/worktrees` is still an old volume mountpoint or a non-empty directory, `pos
 | `.opencode/skills/writing-commits-and-pull-requests/` | Local skill for commit messages, pull request text, and review comments |
 | `openspec/` | OpenSpec config, change proposals under `openspec/changes/`, and living specs under `openspec/specs/` |
 | `.agents/skills/` | Six generated `openspec-*` skills: propose, explore, apply-change, update-change, sync-specs, and archive-change |
+| `docs/migrations/2026-11-21-node-nvm.md` | Node.js, nvm, OpenSpec, and pnpm migration steps for an existing checkout |
 | `NOTICE` | Third-party writing skills and OpenSpec attribution |
 | `scripts/render-excalidraw.sh` | Render `.excalidraw` sources to PNG beside them |
 | `scripts/update-writing-skills.sh` | Refresh or verify the vendored writing skills |
