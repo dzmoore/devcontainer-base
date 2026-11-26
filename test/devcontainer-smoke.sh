@@ -988,6 +988,77 @@ check('SPECIFY_VERSION' not in dockerfile, 'Dockerfile must not pin SPECIFY_VERS
 check('specify' not in dockerfile.lower(), 'Dockerfile must not install Spec Kit')
 check('spec-kit' not in dockerfile.lower(), 'Dockerfile must not mention Spec Kit')
 
+# --- pinned nvm and Node.js toolchain ---
+nvm_version = re.search(r'^ARG NVM_VERSION=(\S+)\s*$', dockerfile, re.M)
+check(nvm_version is not None and nvm_version.group(1) == 'v0.41.0',
+      'Dockerfile must pin ARG NVM_VERSION=v0.41.0')
+node_version = re.search(r'^ARG NODE_VERSION=(\S+)\s*$', dockerfile, re.M)
+check(node_version is not None and node_version.group(1) == '26.13.1',
+      'Dockerfile must pin ARG NODE_VERSION=26.13.1')
+nvm_sha = re.search(r'^ARG NVM_INSTALL_SHA256=(\S+)\s*$', dockerfile, re.M)
+check(nvm_sha is not None
+      and nvm_sha.group(1) == '045932fe05f0d4247c946f2ec0ec4026dbfd8ce88a5f67ea28d8ea833227f48b',
+      'Dockerfile must pin the approved ARG NVM_INSTALL_SHA256 digest')
+check(nvm_sha is not None and re.fullmatch(r'[0-9a-f]{64}', nvm_sha.group(1)) is not None,
+      'Dockerfile NVM_INSTALL_SHA256 must be 64-character lowercase hex')
+check(re.search(r'https://raw\.githubusercontent\.com/nvm-sh/nvm/\$\{NVM_VERSION\}/install\.sh', dockerfile) is not None,
+      'Dockerfile must download the versioned nvm install.sh with ${NVM_VERSION}')
+check('sha256sum --strict -c -' in dockerfile,
+      'Dockerfile must verify the nvm installer with sha256sum --strict -c -')
+check('PROFILE=/dev/null' in dockerfile,
+      'Dockerfile must run the nvm installer with PROFILE=/dev/null')
+check('NVM_NO_SOURCE_FALLBACK=1' in dockerfile,
+      'Dockerfile must set NVM_NO_SOURCE_FALLBACK=1')
+check(re.search(r'NVM_NO_SOURCE_FALLBACK=1\s+nvm\s+install\s+"\$NODE_VERSION"', dockerfile) is not None,
+      'Dockerfile must run NVM_NO_SOURCE_FALLBACK=1 nvm install "$NODE_VERSION"')
+check(re.search(r'\.\s+"\$NVM_DIR/nvm\.sh"\s+--no-use', dockerfile) is not None,
+      'Dockerfile must source nvm.sh --no-use')
+check(re.search(r'nvm\s+alias\s+default\s+"\$NODE_VERSION"', dockerfile) is not None,
+      'Dockerfile must run nvm alias default "$NODE_VERSION"')
+check(re.search(r'nvm\s+use\s+default\b', dockerfile) is not None,
+      'Dockerfile must run nvm use default')
+check(re.search(r'test\s+-L\s+"\$NVM_DIR/current"', dockerfile) is not None,
+      'Dockerfile must assert $NVM_DIR/current is a symlink')
+check('SHELL ["/bin/bash", "-c"]' in dockerfile,
+      'Dockerfile must switch SHELL to ["/bin/bash", "-c"] for nvm')
+check(re.search(r'^ENV HOME=/home/\$\{USERNAME\}\s*$', dockerfile, re.M) is not None,
+      'Dockerfile must declare ENV HOME=/home/${USERNAME}')
+check(re.search(r'^ENV NVM_DIR=/home/\$\{USERNAME\}/\.nvm\s*$', dockerfile, re.M) is not None,
+      'Dockerfile must declare ENV NVM_DIR=/home/${USERNAME}/.nvm')
+check(re.search(r'^ENV NVM_SYMLINK_CURRENT=true\s*$', dockerfile, re.M) is not None,
+      'Dockerfile must declare ENV NVM_SYMLINK_CURRENT=true')
+check('ENV PATH="$NVM_DIR/current/bin:$PATH"' in dockerfile,
+      'Dockerfile must put $NVM_DIR/current/bin on PATH')
+for cmd in ('node --version', 'npm --version', 'npx --version'):
+    check(cmd in dockerfile, f'Dockerfile must print {cmd} after the nvm install')
+
+shell_pos = dockerfile.find('SHELL ["/bin/bash", "-c"]')
+home_pos = dockerfile.find('ENV HOME=')
+nvm_dir_pos = dockerfile.find('ENV NVM_DIR=')
+symlink_env_pos = dockerfile.find('ENV NVM_SYMLINK_CURRENT=')
+nvm_install_pos = dockerfile.find('NVM_NO_SOURCE_FALLBACK=1 nvm install')
+path_pos = dockerfile.find('ENV PATH="$NVM_DIR/current/bin:$PATH"')
+nvm_checksum_pos = dockerfile.find('"$NVM_INSTALL_SHA256"')
+nvm_exec_pos = dockerfile.find('PROFILE=/dev/null bash')
+check(shell_pos != -1 and nvm_install_pos != -1 and shell_pos < nvm_install_pos,
+      'Dockerfile SHELL must precede the nvm install')
+check(home_pos != -1 and nvm_install_pos != -1 and home_pos < nvm_install_pos,
+      'Dockerfile ENV HOME must precede the nvm install')
+check(nvm_dir_pos != -1 and nvm_install_pos != -1 and nvm_dir_pos < nvm_install_pos,
+      'Dockerfile ENV NVM_DIR must precede the nvm install')
+check(symlink_env_pos != -1 and nvm_install_pos != -1 and symlink_env_pos < nvm_install_pos,
+      'Dockerfile ENV NVM_SYMLINK_CURRENT must precede the nvm install')
+check(path_pos != -1 and nvm_install_pos != -1 and path_pos > nvm_install_pos,
+      'Dockerfile ENV PATH must follow the nvm install')
+check(path_pos != -1 and nvm_dir_pos != -1 and path_pos > nvm_dir_pos,
+      'Dockerfile ENV PATH must follow ENV NVM_DIR')
+check(nvm_checksum_pos != -1 and nvm_exec_pos != -1 and nvm_checksum_pos < nvm_exec_pos,
+      'Dockerfile must verify the nvm installer before executing it')
+if apt_block:
+    for debian_pkg in ('nodejs', 'npm'):
+        check(re.search(rf'(?m)^\s*{debian_pkg}\s*(?:\\\s*)?$', apt_block.group(0)) is None,
+              f'Dockerfile apt block must not install Debian {debian_pkg}')
+
 post = post_path.read_text()
 check('# --- opencode host secrets ---' in post,
       'post-create.sh missing opencode host secrets marker')

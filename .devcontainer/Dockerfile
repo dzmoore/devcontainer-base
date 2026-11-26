@@ -18,6 +18,11 @@ ARG NVIM_VERSION=v0.12.6
 ARG STARSHIP_VERSION=v1.27.0
 ARG TZ=America/Los_Angeles
 
+# nvm: https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh
+ARG NVM_VERSION=v0.41.0
+ARG NODE_VERSION=26.13.1
+ARG NVM_INSTALL_SHA256=045932fe05f0d4247c946f2ec0ec4026dbfd8ce88a5f67ea28d8ea833227f48b
+
 # kubectl: https://dl.k8s.io/release/v1.37.2/bin/linux/{amd64,arm64}/kubectl.sha256
 # Helm:   https://get.helm.sh/helm-v4.3.1-linux-{amd64,arm64}.tar.gz.sha256sum
 ARG KUBECTL_VERSION=v1.37.2
@@ -189,7 +194,32 @@ RUN set -eu; \
   ln -snf "$zone" /etc/localtime; \
   printf '%s\n' "$TZ" > /etc/timezone
 
+# Install nvm and Node.js as the developer user so global npm packages write
+# under $HOME without sudo. nvm.sh is bash-only, so switch the build shell
+# before the install and keep it for the remaining steps. The installer is
+# verified against its pinned digest before execution, and
+# NVM_NO_SOURCE_FALLBACK stops a binary download failure from silently
+# compiling Node from source.
+ENV HOME=/home/${USERNAME}
+ENV NVM_DIR=/home/${USERNAME}/.nvm
+ENV NVM_SYMLINK_CURRENT=true
+SHELL ["/bin/bash", "-c"]
 USER $USERNAME
+RUN set -eu; \
+  curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+    -o /tmp/nvm-install.sh "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh"; \
+  printf '%s  %s\n' "$NVM_INSTALL_SHA256" /tmp/nvm-install.sh | sha256sum --strict -c -; \
+  PROFILE=/dev/null bash /tmp/nvm-install.sh; \
+  rm -f /tmp/nvm-install.sh; \
+  . "$NVM_DIR/nvm.sh" --no-use; \
+  NVM_NO_SOURCE_FALLBACK=1 nvm install "$NODE_VERSION"; \
+  nvm alias default "$NODE_VERSION"; \
+  nvm use default; \
+  test -L "$NVM_DIR/current"; \
+  node --version; \
+  npm --version; \
+  npx --version
+ENV PATH="$NVM_DIR/current/bin:$PATH"
 
 # Install OpenCode V2 as the developer user.
 RUN curl -fsSL https://opencode.ai/v2/install | \
