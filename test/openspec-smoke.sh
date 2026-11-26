@@ -163,9 +163,24 @@ else
   else
     pass "post-create.sh does not install OpenSpec from npm"
   fi
-  npm_install_lines="$(grep -nE \
-    '(^|[^[:alnum:]_./-])npm[[:space:]]+install([^[:alnum:]_-]|$)' \
-    "$post_create" || true)"
+  npm_install_pattern='(^|[^[:alnum:]_-])npm[[:space:]]+install([[:space:]]|$)'
+  npm_detector_missed=""
+  for sample in \
+    'npm install -g foo' \
+    '/usr/bin/npm install -g foo' \
+    './npm install foo'; do
+    printf '%s\n' "$sample" | grep -qE "$npm_install_pattern" ||
+      npm_detector_missed="$npm_detector_missed [$sample]"
+  done
+  if printf '%s\n' 'pnpm install foo' | grep -qE "$npm_install_pattern"; then
+    npm_detector_missed="$npm_detector_missed [pnpm false positive]"
+  fi
+  if [ -z "$npm_detector_missed" ]; then
+    pass "npm install detector catches path-qualified invocations and ignores pnpm"
+  else
+    bad "npm install detector catches path-qualified invocations and ignores pnpm (failed:$npm_detector_missed)"
+  fi
+  npm_install_lines="$(grep -nE "$npm_install_pattern" "$post_create" || true)"
   if [ -z "$npm_install_lines" ]; then
     pass "post-create.sh does not run npm install"
   else
@@ -176,7 +191,7 @@ else
   else
     bad "post-create.sh verifies the image-provided openspec --version"
   fi
-  if grep -qF '!= "2.1.1"' "$post_create"; then
+  if grep -qF 'if [ "$openspec_version" != "2.1.1" ]; then' "$post_create"; then
     pass "post-create.sh fails unless the OpenSpec version is exactly 2.1.1"
   else
     bad "post-create.sh fails unless the OpenSpec version is exactly 2.1.1"
@@ -206,8 +221,12 @@ else
       pass "post-create.sh does not check Node ($node_check)"
     fi
   done
-  if grep -qF 'openspec --version' "$post_create" &&
-    grep -qF '!= "2.1.1"' "$post_create"; then
+  if grep -qF 'openspec --version' "$post_create"; then
+    pass "post-create.sh keeps the openspec --version verification"
+  else
+    bad "post-create.sh keeps the openspec --version verification"
+  fi
+  if grep -qF 'if [ "$openspec_version" != "2.1.1" ]; then' "$post_create"; then
     pass "post-create.sh keeps the strict 2.1.1 verification"
   else
     bad "post-create.sh keeps the strict 2.1.1 verification"
