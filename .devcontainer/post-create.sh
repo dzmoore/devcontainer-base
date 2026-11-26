@@ -83,8 +83,9 @@ done
 
 # Repair ownership for existing volumes. Fresh volumes inherit developer
 # ownership from the pre-created directories in the Dockerfile. Chown the
-# parent directories too so tools can create new files under them.
-sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"
+# parent directories too so tools can create new files under them, including
+# the per-user nvm tree that a narrower home chown can miss after a UID remap.
+sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.nvm" "$HOME/.local" "$HOME/.config" "$HOME/.kube"
 
 # --- multi-repo workspace ---
 # Clones live in the bind-mounted workspace so they persist without a named

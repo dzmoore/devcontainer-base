@@ -1233,8 +1233,8 @@ check('# --- brave env ---' not in post,
       'post-create.sh must not install the legacy Brave env loader')
 check('BRAVE_ENV_FILE' not in post,
       'post-create.sh must not reference BRAVE_ENV_FILE')
-check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"' in post,
-      'post-create.sh must chown .local, .config, and .kube to the runtime user')
+check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.nvm" "$HOME/.local" "$HOME/.config" "$HOME/.kube"' in post,
+      'post-create.sh must chown .nvm, .local, .config, and .kube to the runtime user')
 chown_line = re.search(r'chown -R --no-dereference.*', post)
 check(chown_line is not None and '/worktrees' not in chown_line.group(0),
       'post-create.sh must not chown /worktrees')
