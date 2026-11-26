@@ -1003,8 +1003,12 @@ check(nvm_sha is not None and re.fullmatch(r'[0-9a-f]{64}', nvm_sha.group(1)) is
       'Dockerfile NVM_INSTALL_SHA256 must be 64-character lowercase hex')
 check(re.search(r'https://raw\.githubusercontent\.com/nvm-sh/nvm/\$\{NVM_VERSION\}/install\.sh', dockerfile) is not None,
       'Dockerfile must download the versioned nvm install.sh with ${NVM_VERSION}')
-check('sha256sum --strict -c -' in dockerfile,
-      'Dockerfile must verify the nvm installer with sha256sum --strict -c -')
+nvm_checksum = re.search(
+    r"printf '%s  %s\\n' \"\$NVM_INSTALL_SHA256\"\s+/tmp/nvm-install\.sh\s*\|\s*sha256sum --strict -c -",
+    dockerfile)
+check(nvm_checksum is not None,
+      'Dockerfile must verify the nvm installer with '
+      'printf ... "$NVM_INSTALL_SHA256" /tmp/nvm-install.sh | sha256sum --strict -c -')
 check('PROFILE=/dev/null' in dockerfile,
       'Dockerfile must run the nvm installer with PROFILE=/dev/null')
 check('NVM_NO_SOURCE_FALLBACK=1' in dockerfile,
@@ -1038,7 +1042,7 @@ nvm_dir_pos = dockerfile.find('ENV NVM_DIR=')
 symlink_env_pos = dockerfile.find('ENV NVM_SYMLINK_CURRENT=')
 nvm_install_pos = dockerfile.find('NVM_NO_SOURCE_FALLBACK=1 nvm install')
 path_pos = dockerfile.find('ENV PATH="$NVM_DIR/current/bin:$PATH"')
-nvm_checksum_pos = dockerfile.find('"$NVM_INSTALL_SHA256"')
+nvm_checksum_pos = nvm_checksum.start() if nvm_checksum else -1
 nvm_exec_pos = dockerfile.find('PROFILE=/dev/null bash')
 check(shell_pos != -1 and nvm_install_pos != -1 and shell_pos < nvm_install_pos,
       'Dockerfile SHELL must precede the nvm install')
@@ -1056,8 +1060,36 @@ check(nvm_checksum_pos != -1 and nvm_exec_pos != -1 and nvm_checksum_pos < nvm_e
       'Dockerfile must verify the nvm installer before executing it')
 if apt_block:
     for debian_pkg in ('nodejs', 'npm'):
-        check(re.search(rf'(?m)^\s*{debian_pkg}\s*(?:\\\s*)?$', apt_block.group(0)) is None,
+        check(re.search(
+            rf'(?m)^\s*{debian_pkg}(?:[:=][^\s#\\]+)?\s*(?:#.*)?\\?\s*$',
+            apt_block.group(0)) is None,
               f'Dockerfile apt block must not install Debian {debian_pkg}')
+
+# --- nvm login and interactive shells ---
+for startup_path in ('/etc/profile.d/00-nvm.sh', '/etc/bash.bashrc',
+                     '/home/developer/.bashrc'):
+    check(startup_path in dockerfile,
+          f'Dockerfile must write the nvm startup file {startup_path}')
+check("'# --- nvm ---'" in dockerfile,
+      'Dockerfile startup files must include the # --- nvm --- marker')
+check(dockerfile.count('export NVM_DIR="/home/developer/.nvm"') >= 3,
+      'Dockerfile must export the developer NVM_DIR in profile.d and both bashrc files')
+check('BASH_VERSION' in dockerfile,
+      'profile.d nvm source must be guarded by BASH_VERSION')
+check(dockerfile.count('command -v nvm >/dev/null 2>&1') >= 2,
+      'bashrc nvm blocks must be guarded with command -v nvm >/dev/null 2>&1')
+check('$NVM_DIR/current/bin' in dockerfile,
+      'profile.d must add $NVM_DIR/current/bin to PATH')
+startup_sources = re.findall(r'\.\s+"\$NVM_DIR/nvm\.sh"([^\n\\]*)', dockerfile)
+check(len(startup_sources) >= 4,
+      'Dockerfile must source nvm.sh in profile.d and both bashrc files')
+check(all('--no-use' in rest for rest in startup_sources),
+      'every nvm.sh source must use --no-use')
+check(remote_path == '${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin',
+      'remoteEnv.PATH must stay exactly '
+      '${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin')
+check('nvm' not in remote_path.lower(),
+      'remoteEnv.PATH must not add an nvm entry')
 
 post = post_path.read_text()
 check('# --- opencode host secrets ---' in post,

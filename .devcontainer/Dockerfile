@@ -221,6 +221,36 @@ RUN set -eu; \
   npx --version
 ENV PATH="$NVM_DIR/current/bin:$PATH"
 
+# Expose the nvm-managed Node.js to login and interactive bash. Debian's
+# /etc/profile resets PATH, so profile.d restores the current/bin entry for
+# login shells; the bashrc blocks cover interactive bash. Every source uses
+# --no-use so an .nvmrc naming an uninstalled version cannot fail the shell,
+# and the nvm check keeps an interactive login shell from sourcing nvm twice.
+USER root
+RUN set -eu; \
+  printf '%s\n' \
+    '# --- nvm ---' \
+    'export NVM_DIR="/home/developer/.nvm"' \
+    'case ":$PATH:" in' \
+    '  *":$NVM_DIR/current/bin:"*) ;;' \
+    '  *) export PATH="$NVM_DIR/current/bin:$PATH" ;;' \
+    'esac' \
+    'if [ -n "${BASH_VERSION:-}" ]; then' \
+    '  command -v nvm >/dev/null 2>&1 || . "$NVM_DIR/nvm.sh" --no-use' \
+    'fi' \
+    > /etc/profile.d/00-nvm.sh; \
+  printf '%s\n' \
+    '# --- nvm ---' \
+    'export NVM_DIR="/home/developer/.nvm"' \
+    'command -v nvm >/dev/null 2>&1 || . "$NVM_DIR/nvm.sh" --no-use' \
+    >> /etc/bash.bashrc; \
+  printf '%s\n' \
+    '# --- nvm ---' \
+    'export NVM_DIR="/home/developer/.nvm"' \
+    'command -v nvm >/dev/null 2>&1 || . "$NVM_DIR/nvm.sh" --no-use' \
+    >> /home/developer/.bashrc
+USER $USERNAME
+
 # Install OpenCode V2 as the developer user.
 RUN curl -fsSL https://opencode.ai/v2/install | \
   bash -s -- --version "${OPENCODE_VERSION}" --no-modify-path \
