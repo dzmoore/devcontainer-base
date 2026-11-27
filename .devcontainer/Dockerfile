@@ -18,6 +18,16 @@ ARG NVIM_VERSION=v0.12.6
 ARG STARSHIP_VERSION=v1.27.0
 ARG TZ=America/Los_Angeles
 
+# nvm: https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh
+ARG NVM_VERSION=v0.41.0
+ARG NODE_VERSION=26.13.1
+ARG NVM_INSTALL_SHA256=045932fe05f0d4247c946f2ec0ec4026dbfd8ce88a5f67ea28d8ea833227f48b
+
+# OpenSpec: https://github.com/Fission-AI/OpenSpec/releases/download/v2.1.1/SHA256SUMS
+ARG OPENSPEC_VERSION=v2.1.1
+ARG OPENSPEC_SHA256_AMD64=22f0c7c96cc14138becb42aa98e589050c94cda793cbefd7e7ac2d7dee78b6d5
+ARG OPENSPEC_SHA256_ARM64=b7ab16e4138e88df2d2ddc13e687bf20f6fe22751db68492d48e00d77b0183da
+
 # kubectl: https://dl.k8s.io/release/v1.37.2/bin/linux/{amd64,arm64}/kubectl.sha256
 # Helm:   https://get.helm.sh/helm-v4.3.1-linux-{amd64,arm64}.tar.gz.sha256sum
 ARG KUBECTL_VERSION=v1.37.2
@@ -32,6 +42,8 @@ ARG HELM_SHA256_ARM64=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad169
 # is needed for SSH git remotes; ripgrep avoids OpenCode's arm64 fallback path;
 # less backs Glow's --pager mode.
 # python3/python3-venv/pipx are retained for general Python tooling.
+# make/gcc/g++/libc6-dev keep the node-gyp native-addon toolchain, including the
+# C library headers, after the Node feature is removed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   git \
   curl \
@@ -51,12 +63,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   python3 \
   python3-venv \
   pipx \
+  make \
+  gcc \
+  g++ \
+  libc6-dev \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user to avoid running everything as root. The shell must be
-# bash: several Dev Container features run `su <user> -c` snippets that use bash
-# builtins (for example the Node feature's `source nvm.sh`).
+# bash: the user-level nvm install and the remaining lifecycle snippets rely on
+# bash builtins, and `nvm.sh` is bash-only.
 RUN groupadd --gid $USER_GID $USERNAME \
   && useradd --uid $USER_UID --gid $USER_GID -m --shell /bin/bash $USERNAME \
   # Add sudo support for the non-root user
@@ -189,6 +205,82 @@ RUN set -eu; \
   ln -snf "$zone" /etc/localtime; \
   printf '%s\n' "$TZ" > /etc/timezone
 
+# Install the pinned OpenSpec CLI from its official standalone release so it
+# does not depend on the nvm-managed Node.js. The per-architecture digest is
+# verified before extraction, and the version check suppresses telemetry so the
+# build does not emit an event or create root-owned config state.
+RUN set -eu; \
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) openspec_arch=x64; openspec_sha256="${OPENSPEC_SHA256_AMD64}" ;; \
+    arm64) openspec_arch=arm64; openspec_sha256="${OPENSPEC_SHA256_ARM64}" ;; \
+    *) echo "Unsupported architecture for OpenSpec: $arch" >&2; exit 1 ;; \
+  esac; \
+  openspec_asset="openspec-linux-${openspec_arch}.tar.gz"; \
+  tmp="$(mktemp -d)"; \
+  trap 'rm -rf "$tmp"' 0; \
+  curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+    -o "$tmp/$openspec_asset" "https://github.com/Fission-AI/OpenSpec/releases/download/${OPENSPEC_VERSION}/$openspec_asset"; \
+  printf '%s  %s\n' "$openspec_sha256" "$openspec_asset" | (cd "$tmp" && sha256sum --strict -c -); \
+  tar -xzf "$tmp/$openspec_asset" -C "$tmp" openspec; \
+  install -m 0755 "$tmp/openspec" /usr/local/bin/openspec; \
+  env OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec --version
+
+# Install nvm and Node.js as the developer user so global npm packages write
+# under $HOME without sudo. nvm.sh is bash-only, so switch the build shell
+# before the install and keep it for the remaining steps. The installer is
+# verified against its pinned digest before execution, and
+# NVM_NO_SOURCE_FALLBACK stops a binary download failure from silently
+# compiling Node from source.
+ENV HOME=/home/${USERNAME}
+ENV NVM_DIR=/home/${USERNAME}/.nvm
+ENV NVM_SYMLINK_CURRENT=true
+SHELL ["/bin/bash", "-c"]
+USER $USERNAME
+RUN set -eu; \
+  curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+    -o /tmp/nvm-install.sh "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh"; \
+  printf '%s  %s\n' "$NVM_INSTALL_SHA256" /tmp/nvm-install.sh | sha256sum --strict -c -; \
+  PROFILE=/dev/null bash /tmp/nvm-install.sh; \
+  rm -f /tmp/nvm-install.sh; \
+  . "$NVM_DIR/nvm.sh" --no-use; \
+  NVM_NO_SOURCE_FALLBACK=1 nvm install "$NODE_VERSION"; \
+  nvm alias default "$NODE_VERSION"; \
+  nvm use default; \
+  test -L "$NVM_DIR/current"; \
+  node --version; \
+  npm --version; \
+  npx --version
+ENV PATH="$NVM_DIR/current/bin:$PATH"
+
+# Expose the nvm-managed Node.js to login and interactive bash. Debian's
+# /etc/profile resets PATH, so profile.d restores the current/bin entry for
+# login shells; the bashrc blocks cover interactive bash. Every source uses
+# --no-use so an .nvmrc naming an uninstalled version cannot fail the shell,
+# and the nvm check keeps an interactive login shell from sourcing nvm twice.
+USER root
+RUN set -eu; \
+  printf '%s\n' \
+    '# --- nvm ---' \
+    'export NVM_DIR="/home/developer/.nvm"' \
+    'case ":$PATH:" in' \
+    '  *":$NVM_DIR/current/bin:"*) ;;' \
+    '  *) export PATH="$NVM_DIR/current/bin:$PATH" ;;' \
+    'esac' \
+    'if [ -n "${BASH_VERSION:-}" ]; then' \
+    '  command -v nvm >/dev/null 2>&1 || . "$NVM_DIR/nvm.sh" --no-use' \
+    'fi' \
+    > /etc/profile.d/00-nvm.sh; \
+  printf '%s\n' \
+    '# --- nvm ---' \
+    'export NVM_DIR="/home/developer/.nvm"' \
+    'command -v nvm >/dev/null 2>&1 || . "$NVM_DIR/nvm.sh" --no-use' \
+    >> /etc/bash.bashrc; \
+  printf '%s\n' \
+    '# --- nvm ---' \
+    'export NVM_DIR="/home/developer/.nvm"' \
+    'command -v nvm >/dev/null 2>&1 || . "$NVM_DIR/nvm.sh" --no-use' \
+    >> /home/developer/.bashrc
 USER $USERNAME
 
 # Install OpenCode V2 as the developer user.

@@ -7,7 +7,6 @@
     "ghcr.io/devcontainers/features/go:1": {},
     "ghcr.io/devcontainers-extra/features/kubectx-kubens:1": {},
     "ghcr.io/devcontainers-extra/features/fzf:1": {},
-    "ghcr.io/devcontainers/features/node:1": {},
     "ghcr.io/devcontainers-extra/features/bun:1": {},
     "ghcr.io/devcontainers-extra/features/uv:1": {},
     "ghcr.io/devcontainers-extra/features/kind:1": {},

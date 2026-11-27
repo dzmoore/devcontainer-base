@@ -24,7 +24,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 
 `devcontainer-base` is made for projects that need more than a single runtime, and for workflows that mix local containers, a Kubernetes cluster, and an AI coding agent in the same workspace. It is a good fit for platform, backend, and AI projects that want a consistent environment without maintaining a bespoke Dockerfile for every repository.
 
-- **Polyglot by default** — Node.js, Bun, Python with uv, and Go are ready to use.
+- **Polyglot by default** — Node.js 26.13.1 through nvm 0.41.0, Bun, Python with uv, and Go are ready to use.
 - **Cloud-native tooling** — Docker-in-Docker, Compose, Buildx, kubectl, Helm, kind, and kubectx/kubens.
 - **AI-assisted workflow** — OpenCode, persistent tool state, and short-lived GitHub App installation tokens for `gh` and `git`.
 - **Comfortable shell** — Starship prompt, useful aliases, kubectl and Helm completion, paste-safe terminal settings, and a configurable system timezone that defaults to US/Pacific.
@@ -36,7 +36,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | Area | Details |
 | --- | --- |
 | **Base** | `debian:bookworm-slim`, non-root `developer` user (UID/GID 1000 by default), passwordless sudo, `en_US.UTF-8` locale, `TZ=America/Los_Angeles` (US/Pacific, overridable with `DEVCONTAINER_TZ`), `tzdata`, bash |
-| **Languages** | Node.js + npm, Bun, Python 3 + uv, Go |
+| **Languages** | Node.js 26.13.1 with npm through nvm 0.41.0 in the image, plus Bun, Python 3 with uv, and Go from Dev Container Features |
 | **Containers** | Docker-in-Docker, Docker Compose, Buildx |
 | **Kubernetes** | kubectl, Helm, kind, kubectx, kubens |
 | **CLI tools** | git, GitHub CLI (`gh`), fzf, ripgrep (`rg`), Glow (`glow`) with `less` pager, curl, OpenSSH client, unzip, zip, yq |
@@ -46,7 +46,7 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | **Persistence** | named volumes for OpenCode, OpenTUI, uv, Neovim, and Kubernetes config; repo clones live in the workspace |
 
 > [!NOTE]
-> The upstream tools installed in the Dockerfile (`yq`, Glow, kubectl, Helm, OpenCode, Neovim, and Starship) are pinned with build args. Language runtime versions are provided by Dev Container Features; pin them with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
+> The upstream tools installed in the Dockerfile (`yq`, Glow, kubectl, Helm, OpenCode, Neovim, Starship, nvm, Node.js, and OpenSpec) are pinned with build args. Node.js comes from the image through nvm `v0.41.0`. Bun, Python, Go, and the other language runtimes come from Dev Container Features; pin those with feature options if your project needs exact versions. The resolved feature versions are stored in `devcontainer-lock.json`.
 
 ### Pinned build-time tools
 
@@ -59,6 +59,9 @@ A reusable [Dev Container](https://containers.dev) definition that turns a fresh
 | [OpenCode](https://opencode.ai) | `2.3.0` |
 | [Neovim](https://neovim.io) | `v0.12.6` |
 | [Starship](https://starship.rs) | `v1.27.0` |
+| [nvm](https://github.com/nvm-sh/nvm) | `v0.41.0` |
+| [Node.js](https://nodejs.org) | `26.13.1` |
+| [OpenSpec](https://github.com/Fission-AI/OpenSpec) | `2.1.1` |
 
 ### Persistent volumes
 
@@ -87,7 +90,7 @@ Named volumes keep tool state and caches across container rebuilds:
   - The [Dev Containers CLI](https://github.com/devcontainers/cli): `npm install -g @devcontainers/cli`
 
 > [!NOTE]
-> The secret mounts in `devcontainer.json` use `${localEnv:HOME}`. On Windows, use WSL or make sure `HOME` is set in the environment where the Dev Containers tooling runs. The Dockerfile supports `amd64` and `arm64`; the pinned Neovim, yq, kubectl, and Helm downloads fail fast on other architectures.
+> The secret mounts in `devcontainer.json` use `${localEnv:HOME}`. On Windows, use WSL or make sure `HOME` is set in the environment where the Dev Containers tooling runs. The Dockerfile supports `amd64` and `arm64`; the pinned Neovim, yq, kubectl, Helm, and OpenSpec downloads fail fast on other architectures.
 
 ### Open this repository
 
@@ -216,6 +219,7 @@ If `/worktrees` is still an old volume mountpoint or a non-empty directory, `pos
 | `.opencode/skills/writing-commits-and-pull-requests/` | Local skill for commit messages, pull request text, and review comments |
 | `openspec/` | OpenSpec config, change proposals under `openspec/changes/`, and living specs under `openspec/specs/` |
 | `.agents/skills/` | Six generated `openspec-*` skills: propose, explore, apply-change, update-change, sync-specs, and archive-change |
+| `docs/migrations/2026-11-21-node-nvm.md` | Node.js, nvm, OpenSpec, and pnpm migration steps for an existing checkout |
 | `NOTICE` | Third-party writing skills and OpenSpec attribution |
 | `scripts/render-excalidraw.sh` | Render `.excalidraw` sources to PNG beside them |
 | `scripts/update-writing-skills.sh` | Refresh or verify the vendored writing skills |
@@ -224,7 +228,7 @@ If `/worktrees` is still an old volume mountpoint or a non-empty directory, `pos
 | `test/devcontainer-smoke.sh` | End-to-end smoke suite |
 | `test/agents-smoke.sh` | Control-plane instructions and agent prompts |
 | `test/skills-smoke.sh` | Native process skills and orchestration |
-| `test/openspec-smoke.sh` | OpenSpec tree, generated skills, and version guards |
+| `test/openspec-smoke.sh` | OpenSpec tree, generated skills, and the image-provided `openspec` version check |
 | `test/openspec-workflow-smoke.sh` | Disposable-repo init, propose, validate, and archive flow |
 | `test/docs-smoke.sh` | README, NOTICE, and migration-note contract |
 | `test/paste-smoke.py` | PTY paste regression test |
@@ -233,11 +237,13 @@ If `/worktrees` is still an old volume mountpoint or a non-empty directory, `pos
 
 ### Change tool versions
 
-Bump the relevant `ARG` at the top of `.devcontainer/Dockerfile`, then rebuild. For kubectl and Helm, update the matching per-architecture `SHA256` digest ARGs in the same change:
+Bump the relevant `ARG` at the top of `.devcontainer/Dockerfile`, then rebuild. For kubectl, Helm, and OpenSpec, update the matching per-architecture `SHA256` digest ARGs in the same change. For nvm, change `NVM_VERSION` and `NVM_INSTALL_SHA256` together. A Node.js bump changes only `NODE_VERSION` among the build args. Also update the pinned `26.13.1` literals in `test/devcontainer-smoke.sh` and `test/docs-smoke.sh`, and every `26.13.1` mention in this README. The build runs `nvm alias default` and `nvm use default`, so `$NVM_DIR/current` follows the new version. `NVM_NO_SOURCE_FALLBACK=1` fails the build instead of compiling Node from source.
 
 ```bash
 devcontainer build --workspace-folder .
 ```
+
+`post-create.sh` stops with `OpenSpec version mismatch` unless the image binary reports exactly `2.1.1`. When you change `OPENSPEC_VERSION`, update the two `OPENSPEC_SHA256_*` ARGs and the expected version in `.devcontainer/post-create.sh` in the same change; `test/openspec-smoke.sh` asserts the same `2.1.1` literal. After a rebuild, check that `node --version` reports `26.13.1`, `nvm --version` reports `0.41.0`, and `openspec --version` reports `2.1.1`.
 
 To change a Dev Container Feature or its options, edit `features` in `devcontainer.json` and run `devcontainer build` or `devcontainer up`. The CLI updates `devcontainer-lock.json` by default; commit the lockfile. Use `--frozen-lockfile` in CI to fail when the lockfile is out of date.
 
@@ -308,7 +314,7 @@ Change the `containerEnv` and `remoteEnv` values in `devcontainer.json` if your 
 config, agents, and skills into `~/.config/opencode/`, so the workspace and every
 clone under `/workspace/repos` use the same agents and skills.
 
-`openspec/` is the spec layer. `post-create.sh` installs `@fission-ai/openspec@2.1.1`; OpenSpec requires Node.js 22.20 or newer. Each repository runs `openspec init --tools opencode --scope project --profile core` once. The command creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills in `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it.
+`openspec/` is the spec layer. `.devcontainer/Dockerfile` installs the pinned OpenSpec 2.1.1 standalone binary at `/usr/local/bin/openspec`, so the CLI does not depend on the nvm-managed Node.js. `post-create.sh` verifies the exact `2.1.1` version instead of installing it. Each repository runs `openspec init --tools opencode --scope project --profile core` once. The command creates `openspec/config.yaml`, `openspec/changes/`, `openspec/specs/`, and the six `openspec-*` skills in `.agents/skills/`. The control plane stops when `openspec/` is missing instead of creating it.
 
 Use `/openspec-propose` to create a change. The change holds `proposal.md` with the what and why, plus the delta specs under `openspec/changes/<change>/specs/<capability>/spec.md`. `design.md` records the approach when the change is architectural or cross-cutting, and `tasks.md` lists the ordered tasks. Each task names its failing test and verification command. Do not run `openspec propose` as a shell command.
 
@@ -370,7 +376,7 @@ change, run `openspec update` to refresh the generated skills in
 
 ### OpenSpec telemetry
 
-OpenSpec telemetry is disabled in this devcontainer. `.devcontainer/devcontainer.json` sets `OPENSPEC_TELEMETRY=0` and `DO_NOT_TRACK=1` in `containerEnv`. `.devcontainer/post-create.sh` runs `openspec config set telemetry.enabled false` after installing the pinned CLI, so the opt-out holds even in shells without the environment variables. `post-create.sh` stops with `OpenSpec telemetry is still enabled` when the CLI keeps the setting on.
+OpenSpec telemetry is disabled in this devcontainer. `.devcontainer/devcontainer.json` sets `OPENSPEC_TELEMETRY=0` and `DO_NOT_TRACK=1` in `containerEnv`. `.devcontainer/post-create.sh` runs `openspec config set telemetry.enabled false` after verifying the pinned CLI, so the opt-out holds even in shells without the environment variables. `post-create.sh` stops with `OpenSpec telemetry is still enabled` when the CLI keeps the setting on.
 
 Outside this container, set either environment variable, or run:
 
@@ -667,9 +673,18 @@ network access and is not part of the smoke suite.
 
 A few choices are intentional and worth knowing before changing the setup:
 
-- The non-root user uses `/bin/bash` because some Dev Container Features run `su <user> -c` snippets that rely on bash builtins.
+- The non-root user uses `/bin/bash` because `nvm.sh` is bash-only and some Dev Container Features run `su <user> -c` snippets that rely on bash builtins.
 - Firefox ESR is installed only for headless Excalidraw rendering. It is not a user-facing browser; it adds about 272 MB plus GTK and Mesa dependencies, and the official CLI drives it through Playwright's Firefox channel.
 - `libatomic1` is required by the official Node.js arm64 binaries, and `ripgrep` avoids OpenCode's arm64 fallback path.
+- Node.js `26.13.1` comes from nvm `v0.41.0`, installed in the image as `developer` under `/home/developer/.nvm`. The image PATH includes `/home/developer/.nvm/current/bin`, and `/etc/profile.d/00-nvm.sh`, `/etc/bash.bashrc`, and `/home/developer/.bashrc` expose Node and nvm to login and interactive shells. Each of those files sources `nvm.sh` with `--no-use`, so `.nvmrc` does not switch versions; run `nvm use` explicitly.
+- `NVM_SYMLINK_CURRENT=true` keeps `$NVM_DIR/current` on the default Node version. The link is mutable: an interactive `nvm use` or `nvm install` repoints `node` for non-interactive consumers as well.
+- `NVM_NO_SOURCE_FALLBACK=1` makes a failed Node binary download fail the build instead of falling back to a source compile.
+- `make`, `gcc`, `g++`, and `libc6-dev` stay in the image so native npm addons build through npm's bundled `node-gyp`. An unconfigured `npm install` downloads Node headers from nodejs.org when it builds a native addon. For an offline or reproducible build, point node-gyp at the image headers, for example `npm_config_nodedir="$NVM_DIR/versions/node/v26.13.1" npm install` for the default version. After `nvm use`, pass that version's directory instead. The image does not set `npm_config_nodedir`.
+- `post-create.sh` chowns `$HOME/.nvm` with the other runtime directories, so a container remapped to another UID can still run `npm install -g`.
+- pnpm is not preinstalled. Run `npm install -g pnpm` to add it under the nvm global prefix.
+- The nvm installer is checksum-pinned, and that checksum authenticates the installer text, not the nvm tree the installer clones. Node's tarball is verified by nvm against the same-origin `SHASUMS256.txt`. This is a narrower provenance claim than the pinned release digests for Glow, kubectl, Helm, and OpenSpec.
+- OpenSpec `2.1.1` is installed from its standalone release, with the per-architecture SHA-256 verified before extraction. The binary is independent of the nvm-managed Node.js, so a Node.js upgrade does not change the CLI.
+- A container created from an older image keeps the feature-based Node and the npm-installed OpenSpec until it is recreated.
 - `less` is installed from Debian because Glow's `--pager` mode defaults to `less -r`, and `debian:bookworm-slim` does not include a pager.
 - Mount targets are created and chowned in the image so fresh named volumes are writable by `developer`; `post-create.sh` repairs existing volumes.
 - `post-create.sh` removes VS Code's `credsStore` from `~/.docker/config.json` so Docker registry auth does not fail outside a live VS Code session.
@@ -678,14 +693,14 @@ A few choices are intentional and worth knowing before changing the setup:
 - The Helm `ghcr.io` login remains PAT-backed because installation tokens expire after about an hour.
 - Terminal setup falls back to `xterm-256color` when the terminal's terminfo is missing, disables flow control (`stty -ixon`), and enables bracketed paste.
 - kubectl and Helm are installed directly from official release artifacts instead of the `kubectl-helm-minikube` feature. The feature was removed because this setup does not need minikube, and direct installs allow exact pins and digest verification; the feature's Copilot customization is intentionally dropped.
-- The Dockerfile hardcodes the official per-architecture SHA256 digests next to the source URLs and verifies each download with `sha256sum --strict`. The repository, not a same-origin checksum, is the trust anchor.
+- The Dockerfile records the official per-architecture SHA256 digests for the Glow, kubectl, Helm, and OpenSpec downloads next to their source URLs and verifies each download with `sha256sum --strict`. The repository, not a same-origin checksum, is the trust anchor for those tools; the nvm and Node.js installs use the narrower nvm check described above.
 - Helm defaults to `v4.3.1`. To use Helm 3, change `HELM_VERSION` to `v3.22.1` and update the matching per-architecture digest ARGs; Helm 3 security support ends on 2027-02-10.
 - Version support is policy-specific: kubectl `v1.37.2` supports Kubernetes 1.36–1.38, while Helm 4.3.x supports Kubernetes 1.34–1.37.
 - Minikube is no longer included. `kind` remains the local-cluster option; re-add the feature or install minikube manually if a project needs it.
 - Existing containers retain minikube and the other old feature binaries until they are recreated. `smoke-real` will fail the new minikube-absence assertions on those containers, and it expects `/etc/opencode` to be mounted and read-only because the runtime smoke asserts the overlay policy.
 - The feature's `gnupg2`/`dirmngr` installs and its conditional `jq` install are intentionally gone. Add them explicitly if a project needs GPG verification or jq.
 - `KUBECONFIG` points only at the container-local `/home/developer/.kube/config`. Kubernetes client-go locks every file listed in `KUBECONFIG`; on macOS VirtioFS bind mounts a lock file can be created with mode `000`, which breaks `kind`. The `kubeconfig` volume keeps this directory on the Docker volume filesystem and preserves contexts across rebuilds. `post-create.sh` creates the file, sets it to `0600`, and removes stale lock files. Do not add `/workspace/.kube/config` to the default `KUBECONFIG`; merge a project config manually instead.
-- The `developer` username is part of the test contract. If you change it, update the Dockerfile default, `remoteUser`, mounts, `remoteEnv`, and smoke tests together.
+- The `developer` username is part of the test contract. If you change it, update the Dockerfile default, `remoteUser`, mounts, `remoteEnv`, and smoke tests together, plus the `/home/developer/.nvm` paths and the nvm blocks in `/etc/profile.d/00-nvm.sh`, `/etc/bash.bashrc`, and `/home/developer/.bashrc`.
 - The timezone precedence is the image baseline (`ARG TZ` → `ENV TZ`), then `containerEnv.TZ` (the `${localEnv:DEVCONTAINER_TZ:America/Los_Angeles}` template; an unset host variable means US/Pacific), then `post-create.sh`, which reconciles `/etc/localtime` and `/etc/timezone`. `TZ` is deliberately not set in `remoteEnv`, which affects only the Dev Containers tool and its terminal processes, not `docker exec`, daemons, or clean login shells, and it is not exported from `.bashrc`, which would make interactive and non-interactive environments disagree. Programs such as `sudo -i`, `su -`, cron, and dockerd may drop `TZ`, so they rely on `/etc/localtime`; post-create keeps that file and `/etc/timezone` in step with the effective zone.
 
 ## Testing

@@ -83,8 +83,9 @@ done
 
 # Repair ownership for existing volumes. Fresh volumes inherit developer
 # ownership from the pre-created directories in the Dockerfile. Chown the
-# parent directories too so tools can create new files under them.
-sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"
+# parent directories too so tools can create new files under them, including
+# the per-user nvm tree that a narrower home chown can miss after a UID remap.
+sudo chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.nvm" "$HOME/.local" "$HOME/.config" "$HOME/.kube"
 
 # --- multi-repo workspace ---
 # Clones live in the bind-mounted workspace so they persist without a named
@@ -182,121 +183,14 @@ if [ -x "$src" ]; then
 fi
 
 # --- openspec ---
-# Node is provided by the devcontainer Node feature, not the Dockerfile build
-# stage, so install the pinned CLI here. Re-running post-create must not
-# reinstall an already-correct version.
-
-# Compare dotted version strings without relying on GNU sort -V. A pre-release
-# suffix sorts before its release, so 22.20.0-rc.1 is not >= 22.20.0. Splitting
-# on IFS keeps the body free of command substitution and redirections so the
-# smoke test can evaluate it safely.
-version_ge() {
-  local have="${1:-}" want="${2:-}"
-  have="${have#v}"
-  want="${want#v}"
-  local have_release="${have%%-*}"
-  local want_release="${want%%-*}"
-  local have_suffix=""
-  if [ "$have" != "$have_release" ]
-  then
-    have_suffix="${have#*-}"
-  fi
-  local old_ifs="$IFS"
-  IFS='.'
-  set -- $have_release
-  local h1="${1:-0}" h2="${2:-0}" h3="${3:-0}"
-  set -- $want_release
-  local w1="${1:-0}" w2="${2:-0}" w3="${3:-0}"
-  IFS="$old_ifs"
-  local part
-  for part in "$h1" "$h2" "$h3" "$w1" "$w2" "$w3"
-  do
-    if [ -z "$part" ]
-    then
-      return 1
-    fi
-    if [ -n "${part//[0-9]/}" ]
-    then
-      return 1
-    fi
-  done
-  if [ "$h1" -gt "$w1" ]
-  then
-    return 0
-  fi
-  if [ "$h1" -lt "$w1" ]
-  then
-    return 1
-  fi
-  if [ "$h2" -gt "$w2" ]
-  then
-    return 0
-  fi
-  if [ "$h2" -lt "$w2" ]
-  then
-    return 1
-  fi
-  if [ "$h3" -gt "$w3" ]
-  then
-    return 0
-  fi
-  if [ "$h3" -lt "$w3" ]
-  then
-    return 1
-  fi
-  if [ -n "$have_suffix" ]
-  then
-    return 1
-  fi
-  return 0
-}
-
-# Pure predicates: the caller passes the observed version, so the file stays
-# free of command substitution and the smoke test can evaluate these bodies.
-require_node_version() {
-  local required="22.20.0" actual="${1:-}"
-  actual="${actual#v}"
-  if [ -z "$actual" ]
-  then
-    return 1
-  fi
-  version_ge "$actual" "$required"
-}
-
-require_openspec_version() {
-  local required="2.1.1" actual="${1:-}"
-  if [ -z "$actual" ]
-  then
-    return 1
-  fi
-  if [ "$actual" != "${actual##* }" ]
-  then
-    actual="${actual##* }"
-  fi
-  [ "$actual" = "$required" ]
-}
-
-echo "Configuring OpenSpec 2.1.1..."
-if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js is not installed; OpenSpec 2.1.1 requires Node.js 22.20.0 or newer" >&2
-  exit 1
-fi
-node_version="$(node --version 2>/dev/null || true)"
-if ! require_node_version "$node_version"; then
-  echo "Node.js ${node_version:-unknown} is too old; OpenSpec 2.1.1 requires Node.js 22.20.0 or newer" >&2
-  exit 1
-fi
-if ! command -v openspec >/dev/null 2>&1 ||
-  [ "$(openspec --version 2>/dev/null |
-       grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" != "2.1.1" ]; then
-  echo "Installing OpenSpec 2.1.1..."
-  npm install -g --ignore-scripts --no-audit --no-fund @fission-ai/openspec@2.1.1
-fi
+# The CLI is installed from the standalone release in the Dockerfile, so it does
+# not depend on Node and post-create does not install it. Verify the exact
+# image-provided version and fail loudly on drift.
 echo "Verifying OpenSpec..."
 openspec_output="$(openspec --version 2>&1 || true)"
 openspec_version="$(printf '%s\n' "$openspec_output" |
   grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
-if ! require_openspec_version "$openspec_version"; then
+if [ "$openspec_version" != "2.1.1" ]; then
   echo "OpenSpec version mismatch: expected 2.1.1, got '$openspec_output'" >&2
   exit 1
 fi

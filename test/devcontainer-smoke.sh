@@ -317,6 +317,37 @@ check(features == locked, f'feature/lock mismatch: missing={sorted(features-lock
 feature = 'ghcr.io/devcontainers/features/kubectl-helm-minikube:1'
 check(feature not in features, f'{feature} must be absent from devcontainer.json features')
 check(feature not in locked, f'{feature} must be absent from devcontainer-lock.json features')
+
+# The image provides Node.js through nvm, so the Node feature must stay removed.
+node_feature = 'ghcr.io/devcontainers/features/node:1'
+check(node_feature not in features,
+      f'{node_feature} must be absent from devcontainer.json features')
+check(node_feature not in locked,
+      f'{node_feature} must be absent from devcontainer-lock.json features')
+
+expected_features = {
+    'ghcr.io/devcontainers/features/go:1': {},
+    'ghcr.io/devcontainers-extra/features/kubectx-kubens:1': {},
+    'ghcr.io/devcontainers-extra/features/fzf:1': {},
+    'ghcr.io/devcontainers-extra/features/bun:1': {},
+    'ghcr.io/devcontainers-extra/features/uv:1': {},
+    'ghcr.io/devcontainers-extra/features/kind:1': {},
+    'ghcr.io/devcontainers/features/docker-in-docker:2': {'moby': False},
+    'ghcr.io/devcontainers/features/python:1': {},
+    'ghcr.io/devcontainers/features/github-cli:1': {},
+}
+actual_features = dc.get('features', {})
+check(features == set(expected_features),
+      'devcontainer.json must contain exactly the nine remaining features: '
+      f'missing={sorted(set(expected_features) - features)} '
+      f'extra={sorted(features - set(expected_features))}')
+for name, options in expected_features.items():
+    check(actual_features.get(name) == options,
+          f'{name} options must be exactly {options}, got {actual_features.get(name)!r}')
+check(locked == set(expected_features),
+      'devcontainer-lock.json must contain exactly the nine remaining features: '
+      f'missing={sorted(set(expected_features) - locked)} '
+      f'extra={sorted(locked - set(expected_features))}')
 check(dc.get('remoteUser') == 'developer', 'remoteUser must be developer')
 check(dc.get('postCreateCommand') == 'bash .devcontainer/post-create.sh', 'postCreateCommand must run post-create.sh')
 check(dc.get('waitFor') == 'postCreateCommand', 'waitFor must be postCreateCommand')
@@ -930,7 +961,8 @@ apt_block = re.search(r'(?ms)^RUN apt-get update.*?rm -rf /var/lib/apt/lists/\*'
 check(apt_block is not None, 'Dockerfile apt package block not found')
 if apt_block:
     for pkg in ('libatomic1', 'openssh-client', 'openssl', 'firefox-esr', 'ripgrep', 'less',
-                'locales', 'unzip', 'zip', 'bash-completion', 'python3', 'python3-venv', 'pipx'):
+                'locales', 'unzip', 'zip', 'bash-completion', 'python3', 'python3-venv', 'pipx',
+                'make', 'gcc', 'g++', 'libc6-dev'):
         check(re.search(rf'(?m)^\s*{re.escape(pkg)}\s*(?:\\\s*)?$', apt_block.group(0)) is not None,
               f'Dockerfile apt package block must install {pkg}')
 check(re.search(r'^ENV LANG=en_US\.UTF-8', dockerfile, re.M) is not None,
@@ -988,6 +1020,207 @@ check('SPECIFY_VERSION' not in dockerfile, 'Dockerfile must not pin SPECIFY_VERS
 check('specify' not in dockerfile.lower(), 'Dockerfile must not install Spec Kit')
 check('spec-kit' not in dockerfile.lower(), 'Dockerfile must not mention Spec Kit')
 
+# --- pinned nvm and Node.js toolchain ---
+nvm_version = re.search(r'^ARG NVM_VERSION=(\S+)\s*$', dockerfile, re.M)
+check(nvm_version is not None and nvm_version.group(1) == 'v0.41.0',
+      'Dockerfile must pin ARG NVM_VERSION=v0.41.0')
+node_version = re.search(r'^ARG NODE_VERSION=(\S+)\s*$', dockerfile, re.M)
+check(node_version is not None and node_version.group(1) == '26.13.1',
+      'Dockerfile must pin ARG NODE_VERSION=26.13.1')
+nvm_sha = re.search(r'^ARG NVM_INSTALL_SHA256=(\S+)\s*$', dockerfile, re.M)
+check(nvm_sha is not None
+      and nvm_sha.group(1) == '045932fe05f0d4247c946f2ec0ec4026dbfd8ce88a5f67ea28d8ea833227f48b',
+      'Dockerfile must pin the approved ARG NVM_INSTALL_SHA256 digest')
+check(nvm_sha is not None and re.fullmatch(r'[0-9a-f]{64}', nvm_sha.group(1)) is not None,
+      'Dockerfile NVM_INSTALL_SHA256 must be 64-character lowercase hex')
+check(re.search(r'https://raw\.githubusercontent\.com/nvm-sh/nvm/\$\{NVM_VERSION\}/install\.sh', dockerfile) is not None,
+      'Dockerfile must download the versioned nvm install.sh with ${NVM_VERSION}')
+nvm_checksum = re.search(
+    r"printf '%s  %s\\n' \"\$NVM_INSTALL_SHA256\"\s+/tmp/nvm-install\.sh\s*\|\s*sha256sum --strict -c -",
+    dockerfile)
+check(nvm_checksum is not None,
+      'Dockerfile must verify the nvm installer with '
+      'printf ... "$NVM_INSTALL_SHA256" /tmp/nvm-install.sh | sha256sum --strict -c -')
+check('PROFILE=/dev/null' in dockerfile,
+      'Dockerfile must run the nvm installer with PROFILE=/dev/null')
+check('NVM_NO_SOURCE_FALLBACK=1' in dockerfile,
+      'Dockerfile must set NVM_NO_SOURCE_FALLBACK=1')
+check(re.search(r'NVM_NO_SOURCE_FALLBACK=1\s+nvm\s+install\s+"\$NODE_VERSION"', dockerfile) is not None,
+      'Dockerfile must run NVM_NO_SOURCE_FALLBACK=1 nvm install "$NODE_VERSION"')
+nvm_install_source = re.search(
+    r'(?m)^\s*\.\s+"\$NVM_DIR/nvm\.sh"\s+--no-use[^\n]*\n'
+    r'\s*NVM_NO_SOURCE_FALLBACK=1\s+nvm\s+install',
+    dockerfile)
+check(nvm_install_source is not None,
+      'Dockerfile must source nvm.sh --no-use on the line before '
+      'NVM_NO_SOURCE_FALLBACK=1 nvm install')
+check(re.search(r'\.\s+"\$NVM_DIR/nvm\.sh"\s+--no-use', dockerfile) is not None,
+      'Dockerfile must source nvm.sh --no-use')
+check(re.search(r'nvm\s+alias\s+default\s+"\$NODE_VERSION"', dockerfile) is not None,
+      'Dockerfile must run nvm alias default "$NODE_VERSION"')
+check(re.search(r'nvm\s+use\s+default\b', dockerfile) is not None,
+      'Dockerfile must run nvm use default')
+check(re.search(r'test\s+-L\s+"\$NVM_DIR/current"', dockerfile) is not None,
+      'Dockerfile must assert $NVM_DIR/current is a symlink')
+check('SHELL ["/bin/bash", "-c"]' in dockerfile,
+      'Dockerfile must switch SHELL to ["/bin/bash", "-c"] for nvm')
+check(re.search(r'^ENV HOME=/home/\$\{USERNAME\}\s*$', dockerfile, re.M) is not None,
+      'Dockerfile must declare ENV HOME=/home/${USERNAME}')
+check(re.search(r'^ENV NVM_DIR=/home/\$\{USERNAME\}/\.nvm\s*$', dockerfile, re.M) is not None,
+      'Dockerfile must declare ENV NVM_DIR=/home/${USERNAME}/.nvm')
+check(re.search(r'^ENV NVM_SYMLINK_CURRENT=true\s*$', dockerfile, re.M) is not None,
+      'Dockerfile must declare ENV NVM_SYMLINK_CURRENT=true')
+check('ENV PATH="$NVM_DIR/current/bin:$PATH"' in dockerfile,
+      'Dockerfile must put $NVM_DIR/current/bin on PATH')
+for cmd in ('node --version', 'npm --version', 'npx --version'):
+    check(cmd in dockerfile, f'Dockerfile must print {cmd} after the nvm install')
+check(re.search(r'\bnpm\s+install\b', dockerfile) is None,
+      'Dockerfile must not npm install packages into the image')
+check(re.search(r'\bpnpm\s+install\b', dockerfile) is None,
+      'Dockerfile must not pnpm install packages into the image')
+
+shell_pos = dockerfile.find('SHELL ["/bin/bash", "-c"]')
+home_pos = dockerfile.find('ENV HOME=')
+nvm_dir_pos = dockerfile.find('ENV NVM_DIR=')
+symlink_env_pos = dockerfile.find('ENV NVM_SYMLINK_CURRENT=')
+nvm_install_pos = dockerfile.find('NVM_NO_SOURCE_FALLBACK=1 nvm install')
+path_pos = dockerfile.find('ENV PATH="$NVM_DIR/current/bin:$PATH"')
+nvm_checksum_pos = nvm_checksum.start() if nvm_checksum else -1
+nvm_exec_pos = dockerfile.find('PROFILE=/dev/null bash')
+check(shell_pos != -1 and nvm_install_pos != -1 and shell_pos < nvm_install_pos,
+      'Dockerfile SHELL must precede the nvm install')
+check(home_pos != -1 and nvm_install_pos != -1 and home_pos < nvm_install_pos,
+      'Dockerfile ENV HOME must precede the nvm install')
+check(nvm_dir_pos != -1 and nvm_install_pos != -1 and nvm_dir_pos < nvm_install_pos,
+      'Dockerfile ENV NVM_DIR must precede the nvm install')
+check(symlink_env_pos != -1 and nvm_install_pos != -1 and symlink_env_pos < nvm_install_pos,
+      'Dockerfile ENV NVM_SYMLINK_CURRENT must precede the nvm install')
+check(path_pos != -1 and nvm_install_pos != -1 and path_pos > nvm_install_pos,
+      'Dockerfile ENV PATH must follow the nvm install')
+check(path_pos != -1 and nvm_dir_pos != -1 and path_pos > nvm_dir_pos,
+      'Dockerfile ENV PATH must follow ENV NVM_DIR')
+check(nvm_checksum_pos != -1 and nvm_exec_pos != -1 and nvm_checksum_pos < nvm_exec_pos,
+      'Dockerfile must verify the nvm installer before executing it')
+if apt_block:
+    for debian_pkg in ('nodejs', 'npm'):
+        check(re.search(
+            rf'(?m)^\s*{debian_pkg}(?:[:=][^\s#\\]+)?\s*(?:#.*)?\\?\s*$',
+            apt_block.group(0)) is None,
+              f'Dockerfile apt block must not install Debian {debian_pkg}')
+
+# --- pinned OpenSpec standalone CLI ---
+openspec_version = re.search(r'^ARG OPENSPEC_VERSION=(\S+)\s*$', dockerfile, re.M)
+check(openspec_version is not None and openspec_version.group(1) == 'v2.1.1',
+      'Dockerfile must pin ARG OPENSPEC_VERSION=v2.1.1')
+openspec_digests = {
+    'OPENSPEC_SHA256_AMD64':
+        '22f0c7c96cc14138becb42aa98e589050c94cda793cbefd7e7ac2d7dee78b6d5',
+    'OPENSPEC_SHA256_ARM64':
+        'b7ab16e4138e88df2d2ddc13e687bf20f6fe22751db68492d48e00d77b0183da',
+}
+for arg, approved in openspec_digests.items():
+    digest = re.search(rf'^ARG {re.escape(arg)}=(\S+)\s*$', dockerfile, re.M)
+    check(digest is not None and digest.group(1) == approved,
+          f'Dockerfile must pin the approved ARG {arg} digest')
+    check(digest is not None and re.fullmatch(r'[0-9a-f]{64}', digest.group(1)) is not None,
+          f'Dockerfile {arg} must be 64-character lowercase hex')
+check('amd64) openspec_arch=x64' in dockerfile
+      and 'arm64) openspec_arch=arm64' in dockerfile,
+      'Dockerfile must map amd64/arm64 to the OpenSpec release architectures')
+check('Unsupported architecture for OpenSpec' in dockerfile,
+      'Dockerfile must reject unsupported architectures for OpenSpec')
+check('openspec-linux-${openspec_arch}.tar.gz' in dockerfile,
+      'Dockerfile must use the canonical OpenSpec asset name')
+check(re.search(
+    r'https://github\.com/Fission-AI/OpenSpec/releases/download/'
+    r'\$\{OPENSPEC_VERSION\}/\$openspec_asset', dockerfile) is not None,
+      'Dockerfile must download the OpenSpec tarball from the official '
+      'release URL with ${OPENSPEC_VERSION}')
+openspec_checksum = re.search(
+    r"printf '%s  %s\\n' \"\$openspec_sha256\" \"\$openspec_asset\""
+    r"\s*\|\s*\(cd \"\$tmp\" && sha256sum --strict -c -\)",
+    dockerfile)
+check(openspec_checksum is not None,
+      'Dockerfile must verify the OpenSpec tarball with '
+      'printf ... | sha256sum --strict -c -')
+check(re.search(
+    r'tar\s+-xzf\s+"\$tmp/\$openspec_asset"\s+-C\s+"\$tmp"\s+openspec\b',
+    dockerfile) is not None,
+      'Dockerfile must extract only openspec from the OpenSpec tarball')
+check(re.search(
+    r'install\s+-m\s+0755\s+"\$tmp/openspec"\s+/usr/local/bin/openspec',
+    dockerfile) is not None,
+      'Dockerfile must install openspec at mode 0755 to /usr/local/bin/openspec')
+check('env OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec --version' in dockerfile,
+      'Dockerfile must run the telemetry-suppressed openspec --version check')
+check('@fission-ai/openspec' not in dockerfile.lower(),
+      'Dockerfile must not install OpenSpec from npm')
+check(re.search(r'npm\s+install\s+(?:-g|--global)\b[^\n]*openspec', dockerfile,
+                re.I) is None,
+      'Dockerfile must not npm install OpenSpec')
+openspec_check_pos = dockerfile.find(
+    'env OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec --version')
+first_user_line = re.search(r'(?m)^USER \$USERNAME\s*$', dockerfile)
+check(openspec_check_pos != -1 and first_user_line is not None
+      and openspec_check_pos < first_user_line.start(),
+      'Dockerfile must install OpenSpec as root before USER $USERNAME')
+
+# --- nvm login and interactive shells ---
+startup_targets = {
+    '/etc/profile.d/00-nvm.sh': r' > /etc/profile\.d/00-nvm\.sh;',
+    '/etc/bash.bashrc': r' >> /etc/bash\.bashrc;',
+    '/home/developer/.bashrc': r' >> /home/developer/\.bashrc\b',
+}
+
+
+def startup_block(target):
+    match = re.search(
+        r"printf '%s\\n' ((?:(?!printf '%s\\n').)*?)" + target,
+        dockerfile, re.S)
+    if match is None:
+        return None
+    return '\n'.join(re.findall(r"'([^']*)'", match.group(1)))
+
+
+startup_blocks = {}
+for startup_path, target in startup_targets.items():
+    check(startup_path in dockerfile,
+          f'Dockerfile must write the nvm startup file {startup_path}')
+    block = startup_block(target)
+    check(block is not None,
+          f'Dockerfile must write the {startup_path} block with printf')
+    if block is None:
+        continue
+    startup_blocks[startup_path] = block
+    check(block.count('# --- nvm ---') == 1,
+          f'{startup_path} must contain exactly one # --- nvm --- marker')
+    check(block.count('command -v nvm >/dev/null 2>&1') == 1,
+          f'{startup_path} must contain exactly one command -v nvm guard')
+    check(len(re.findall(r'\.\s+"\$NVM_DIR/nvm\.sh"\s+--no-use', block)) == 1,
+          f'{startup_path} must source nvm.sh --no-use exactly once')
+    check(len(re.findall(r'\.\s+"\$NVM_DIR/nvm\.sh"', block)) == 1,
+          f'{startup_path} must contain exactly one nvm.sh source line, '
+          f'always with --no-use')
+    guard_pos = block.find('command -v nvm >/dev/null 2>&1')
+    source_pos = block.find('. "$NVM_DIR/nvm.sh" --no-use')
+    check(guard_pos != -1 and source_pos != -1 and guard_pos < source_pos,
+          f'{startup_path} must guard the nvm.sh source before sourcing it')
+    check('export NVM_DIR="/home/developer/.nvm"' in block,
+          f'{startup_path} must export the developer NVM_DIR')
+
+profile_block = startup_blocks.get('/etc/profile.d/00-nvm.sh', '')
+check('export PATH="$NVM_DIR/current/bin:$PATH"' in profile_block,
+      'profile.d block must add $NVM_DIR/current/bin to PATH')
+profile_bash = profile_block.find('BASH_VERSION')
+profile_source = profile_block.find('. "$NVM_DIR/nvm.sh" --no-use')
+check(profile_bash != -1 and profile_source != -1 and profile_bash < profile_source,
+      'profile.d block must guard the nvm.sh source with BASH_VERSION before sourcing')
+check(remote_path == '${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin',
+      'remoteEnv.PATH must stay exactly '
+      '${containerEnv:PATH}:/home/developer/.opencode/bin:/home/developer/.local/bin')
+check('nvm' not in remote_path.lower(),
+      'remoteEnv.PATH must not add an nvm entry')
+
 post = post_path.read_text()
 check('# --- opencode host secrets ---' in post,
       'post-create.sh missing opencode host secrets marker')
@@ -1003,8 +1236,8 @@ check('# --- brave env ---' not in post,
       'post-create.sh must not install the legacy Brave env loader')
 check('BRAVE_ENV_FILE' not in post,
       'post-create.sh must not reference BRAVE_ENV_FILE')
-check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.local" "$HOME/.config" "$HOME/.kube"' in post,
-      'post-create.sh must chown .local, .config, and .kube to the runtime user')
+check('chown -R --no-dereference "$DEV_USER:$DEV_USER" "$HOME/.nvm" "$HOME/.local" "$HOME/.config" "$HOME/.kube"' in post,
+      'post-create.sh must chown .nvm, .local, .config, and .kube to the runtime user')
 chown_line = re.search(r'chown -R --no-dereference.*', post)
 check(chown_line is not None and '/worktrees' not in chown_line.group(0),
       'post-create.sh must not chown /worktrees')
